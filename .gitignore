@@ -1,0 +1,27 @@
+# Nunca versionar archivos del juego original (cada usuario aporta su copia)
+*.apk
+*.obb
+*.so
+*.bar
+*.dex
+gamedata/
+data/
+
+# Build
+build/
+out/
+vcpkg_installed/
+.vs/
+CMakeUserPresets.json
+*.exe
+*.pdb
+*.ilk
+*.obj
+*.lib
+*.dll
+
+# Runtime del usuario
+saves/
+logs/
+zombiewood.json
+imgui.ini
