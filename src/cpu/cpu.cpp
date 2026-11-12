@@ -295,6 +295,46 @@ LONG WINAPI HostCrashFilter(EXCEPTION_POINTERS* ep) {
   return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// Pagina de "kuser helpers" del kernel Linux ARM (0xffff0000): codigo que el userspace llama por
+// direccion fija (atomicos de protobuf/gcc en ARMv7 antiguo). Implementados con LDREX/STREX.
+void MapKuserHelpers() {
+  constexpr gaddr kPage = 0xFFFF0000u;
+  if (!GuestMemory::Map(kPage, 0x1000, kProtRW, "kuser")) return;
+  auto put = [](gaddr at, std::initializer_list<std::uint32_t> code) {
+    for (std::uint32_t w : code) {
+      mem::W32(at, w);
+      at += 4;
+    }
+  };
+  // __kuser_cmpxchg64(const int64* old, const int64* new, int64* ptr) -> 0 si intercambio (C = 1)
+  put(0xFFFF0F60u, {0xE92D00F0u,   // push {r4-r7}
+                    0xE8900030u,   // ldmia r0, {r4, r5}
+                    0xE89100C0u,   // ldmia r1, {r6, r7}
+                    0xE1B20F9Fu,   // 1: ldrexd r0, r1, [r2]
+                    0xE0303004u,   // eors r3, r0, r4
+                    0x00313005u,   // eorseq r3, r1, r5
+                    0x01A23F96u,   // strexdeq r3, r6, r7, [r2]
+                    0x03330001u,   // teqeq r3, #1
+                    0x0AFFFFF9u,   // beq 1b
+                    0xE2730000u,   // rsbs r0, r3, #0
+                    0xE8BD00F0u,   // pop {r4-r7}
+                    0xE12FFF1Eu}); // bx lr
+  // __kuser_memory_barrier
+  put(0xFFFF0FA0u, {0xF57FF05Fu, 0xE12FFF1Eu});  // dmb sy; bx lr
+  // __kuser_cmpxchg(int old, int new, int* ptr) -> 0 si intercambio (C = 1)
+  put(0xFFFF0FC0u, {0xE1923F9Fu,   // 1: ldrex r3, [r2]
+                    0xE0533000u,   // subs r3, r3, r0
+                    0x01823F91u,   // strexeq r3, r1, [r2]
+                    0x03330001u,   // teqeq r3, #1
+                    0x0AFFFFFAu,   // beq 1b
+                    0xE2730000u,   // rsbs r0, r3, #0
+                    0xE12FFF1Eu}); // bx lr
+  // __kuser_get_tls
+  put(0xFFFF0FE0u, {0xEE1D0F70u, 0xE12FFF1Eu});  // mrc p15, 0, r0, c13, c0, 3; bx lr
+  mem::W32(0xFFFF0FFCu, 5);                      // __kuser_helper_version
+  GuestMemory::Protect(kPage, 0x1000, kProtRX);
+}
+
 LONG WINAPI DebugVeh(EXCEPTION_POINTERS* ep) {
   std::fprintf(stderr, "[veh] code=%08lx rip=%p addr=%p\n", ep->ExceptionRecord->ExceptionCode,
                ep->ExceptionRecord->ExceptionAddress,
@@ -319,6 +359,7 @@ Cpu* detail::CpuImpl::Create(gsize stack_size, std::string name) {
   static std::once_flag once;
   std::call_once(once, [] {
     internal::HleEnsureInit();
+    MapKuserHelpers();
     SetUnhandledExceptionFilter(HostCrashFilter);
     if (EnvFlag("ZW_DEBUG_VEH", false)) AddVectoredExceptionHandler(1, DebugVeh);
     if (g_trace.load() < 0) {
@@ -659,6 +700,13 @@ std::string addr2sym(gaddr addr) {
   if (addr >= GuestMemory::kThunksBase && addr < GuestMemory::kThunksEnd) {
     std::string n = hle::StubName(addr & ~1u);
     if (!n.empty()) return "hle!" + n;
+  }
+  if (addr >= 0xFFFF0F60u) {
+    const gaddr a = addr & ~3u;
+    if (a >= 0xFFFF0FE0u) return "kuser!__kuser_get_tls";
+    if (a >= 0xFFFF0FC0u) return "kuser!__kuser_cmpxchg";
+    if (a >= 0xFFFF0FA0u) return "kuser!__kuser_memory_barrier";
+    if (a < 0xFFFF0F90u) return "kuser!__kuser_cmpxchg64";
   }
   std::vector<Symbolizer> copy;
   {
