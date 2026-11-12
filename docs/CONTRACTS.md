@@ -57,8 +57,7 @@ gaddr h2g(const void* p);                    // nullptr -> 0; error en log (y 0)
 | kuser | `0xFFFF0000–0xFFFF0FFF` | *kuser helpers* de Linux ARM (`__kuser_cmpxchg` `0xffff0fc0`, `__kuser_memory_barrier` `0xffff0fa0`, `__kuser_cmpxchg64` `0xffff0f60`, `__kuser_get_tls` `0xffff0fe0`), implementados en código guest con `LDREX/STREX`. El `.so` los llama por dirección fija (atómicos de protobuf); no son imports |
 
 Tocar desde el host una dirección guest no mapeada = violación de acceso; el runtime la vuelca con el estado guest y aborta.
-El JIT accede a la memoria con una tabla de páginas (sin excepciones del host): un acceso **del guest** a memoria no mapeada
-acaba en `GuestFault` con volcado, no en un crash.
+Un acceso **del guest** a memoria no mapeada acaba en `GuestFault` con volcado, no en un crash.
 Si el puntero viene del guest y puede ser basura, valida con `GuestMemory::IsMapped(addr, size)`.
 
 ### 1.2 Páginas
@@ -425,14 +424,17 @@ la dirección guest implicada y `DumpState`, y termina el proceso.
 
 Variables de entorno: `ZW_TRACE_IMPORTS`, `ZW_TRACE_FILTER`, `ZW_ABORT_ON_UNIMPLEMENTED`, `ZW_TRACE_INIT=1` (una línea por
 constructor de `.init_array`), `ZW_JIT_CACHE_MB` (caché de código por hilo, 64 por defecto), `ZW_DEBUG_VEH=1` (vuelca cada
-excepción del host de primera oportunidad), `ZW_FASTMEM=1` (experimental, ver abajo).
+excepción del host de primera oportunidad), `ZW_FASTMEM=0` / `ZW_FASTMEM_EXCLUSIVE=0` (ver abajo).
 
-**Acceso a memoria del JIT.** Por defecto dynarmic usa tabla de páginas (`page_table` con offset absoluto) y el monitor
-exclusivo global para `LDREX/STREX`. `ZW_FASTMEM=1` activa *fastmem* (+ exclusivos por `cmpxchg`), más rápido, pero **no es
-seguro con este dynarmic en MSVC**: su manejador de excepciones de Windows (`exception_handler_windows.cpp`) llama al
-callback de fastmem reservando solo 8 bytes de pila en vez del *shadow space* de 32 de la ABI x64; el primer fallo de
-fastmem (cualquier acceso guest a memoria no mapeada) corrompe la dirección de retorno y mata el proceso. Arreglo pendiente
-(fuera de T3, toca `cmake/ZwDependencies.cmake`): parchear dynarmic (`sub rsp, 8` → `sub rsp, 0x28` en ese manejador).
+**Acceso a memoria del JIT.** Por defecto dynarmic usa *fastmem* (`host = base + guest`, los fallos de página del host se
+convierten en `GuestFault`) y `LDREX/STREX` por `cmpxchg`. `ZW_FASTMEM=0` cambia a tabla de páginas + monitor exclusivo global
+(más lento, sin excepciones del host; útil para depurar); `ZW_FASTMEM_EXCLUSIVE=0` mantiene fastmem pero pasa los exclusivos
+por el monitor. Fastmem necesita un parche local a dynarmic que aplica `cmake/ZwDependencies.cmake` en cada configure: su
+manejador de excepciones de Windows reservaba 8 bytes de pila en vez del *shadow space* de la ABI x64 (`sub rsp, 8` →
+`sub rsp, 0x28`), lo que con MSVC corrompía la dirección de retorno en el primer fallo de fastmem.
+Medido en win-debug: bucle atómico de 2 hilos (4 M de `LDREX/STREX` contendidos) 8.2–8.5 s con tabla de páginas frente a
+1.6–3.5 s con fastmem; los 552 constructores de `--load-only` no cambian (6–8 s en ambos modos: domina la compilación del JIT
+en un dynarmic sin optimizar).
 
 ---
 

@@ -2,6 +2,7 @@
 // interworking, hilos con LDREX/STREX, setjmp/longjmp, fallos y hooks.
 // El codigo guest es tests/cpu/guest_code.c compilado a Thumb-2 (guest_blob.inc).
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -199,16 +200,18 @@ int main() {
 
     SECTION("dos hilos guest con LDREX/STREX (threads::Create)");
     {
-      const std::uint32_t N = 200000;
+      const std::uint32_t N = 500000;
       gaddr args = GuestMemory::Calloc(1, sizeof(ThreadArgs));
       gaddr cells = GuestMemory::Calloc(3, 64);
       *g2h<ThreadArgs>(args) = ThreadArgs{cells, cells + 64, cells + 128, N};
       threads::CreateParams p{entry_stub, args, 0, false, "worker"};
+      const auto clock0 = std::chrono::steady_clock::now();
       const auto t1 = threads::Create(p), t2 = threads::Create(p);
       CHECK(t1 && t2 && t1 != t2);
       std::uint32_t r1 = 0, r2 = 0;
       CHECK(threads::Join(t1, &r1) && threads::Join(t2, &r2));
       CHECK(r1 == 0xC0FFEE && r2 == 0xC0FFEE);
+      std::printf("  tiempo de los dos hilos: %lld ms\n", (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - clock0).count());
       std::printf("  contador atomico = %u, contador bajo spinlock = %u (esperado %u)\n", mem::R32(cells), mem::R32(cells + 128), 2 * N);
       CHECK(mem::R32(cells) == 2 * N);
       CHECK(mem::R32(cells + 128) == 2 * N);

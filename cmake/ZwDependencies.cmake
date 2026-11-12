@@ -39,3 +39,26 @@ FetchContent_Declare(dynarmic
   GIT_TAG        a46601580d5512d324104f985b5f0209dc980ddc
   GIT_SUBMODULES_RECURSE TRUE)
 FetchContent_MakeAvailable(dynarmic)
+
+# Parche local a dynarmic (T3): su manejador de excepciones de Windows llama al callback de fastmem
+# reservando solo 8 bytes de pila; la ABI x64 exige 32 de "shadow space" (+8 de alineacion). Con MSVC
+# el callee escribe en ese espacio y pisa la direccion de retorno del manejador -> crash en el primer
+# fallo de fastmem. Idempotente; se aplica en cada configure sobre el arbol ya descargado.
+set(_zw_dyn_eh "${dynarmic_SOURCE_DIR}/src/dynarmic/backend/x64/exception_handler_windows.cpp")
+if(EXISTS "${_zw_dyn_eh}")
+  file(READ "${_zw_dyn_eh}" _zw_dyn_eh_src)
+  string(FIND "${_zw_dyn_eh_src}" "code.sub(code.rsp, 8);" _zw_dyn_eh_pos)
+  if(NOT _zw_dyn_eh_pos EQUAL -1)
+    string(REPLACE "code.sub(code.rsp, 8);" "code.sub(code.rsp, 0x28);  // zombiewood: shadow space" _zw_dyn_eh_src "${_zw_dyn_eh_src}")
+    string(REPLACE "code.add(code.rsp, 8);" "code.add(code.rsp, 0x28);  // zombiewood: shadow space" _zw_dyn_eh_src "${_zw_dyn_eh_src}")
+    file(WRITE "${_zw_dyn_eh}" "${_zw_dyn_eh_src}")
+    message(STATUS "dynarmic: parche de shadow space aplicado a exception_handler_windows.cpp")
+  else()
+    string(FIND "${_zw_dyn_eh_src}" "code.sub(code.rsp, 0x28);" _zw_dyn_eh_pos)
+    if(_zw_dyn_eh_pos EQUAL -1)
+      message(FATAL_ERROR "dynarmic: no se reconoce exception_handler_windows.cpp; revisar el parche de fastmem")
+    endif()
+  endif()
+else()
+  message(FATAL_ERROR "dynarmic: falta ${_zw_dyn_eh}")
+endif()

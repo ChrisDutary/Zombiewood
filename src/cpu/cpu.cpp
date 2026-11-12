@@ -414,10 +414,8 @@ Cpu* detail::CpuImpl::Create(gsize stack_size, std::string name) {
   cfg.processor_id = I.slot;
   cfg.global_monitor = &Monitor();
   cfg.arch_version = Dynarmic::A32::ArchVersion::v8;
-  if (EnvFlag("ZW_FASTMEM", false)) {
-    // Experimental: el manejador de excepciones de dynarmic en Windows llama a su callback sin
-    // reservar el "shadow space" de la ABI x64, y con MSVC eso corrompe la pila al primer fallo
-    // de fastmem. Solo es seguro mientras el guest no toque memoria no mapeada.
+  if (EnvFlag("ZW_FASTMEM", true)) {
+    // Requiere el parche de shadow space a dynarmic que aplica cmake/ZwDependencies.cmake.
     cfg.fastmem_pointer = reinterpret_cast<std::uintptr_t>(g_membase);
     cfg.fastmem_exclusive_access = EnvFlag("ZW_FASTMEM_EXCLUSIVE", true);
   } else {
