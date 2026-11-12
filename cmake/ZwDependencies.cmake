@@ -38,7 +38,25 @@ FetchContent_Declare(dynarmic
   GIT_REPOSITORY https://github.com/azahar-emu/dynarmic.git
   GIT_TAG        a46601580d5512d324104f985b5f0209dc980ddc
   GIT_SUBMODULES_RECURSE TRUE)
+# dynarmic y sus externals (mcl, xbyak, zydis, fmt...) se compilan optimizados tambien en Debug: el JIT
+# sin optimizar hace el arranque del guest varias veces mas lento. Solo cambian /Od /RTC1 -> /O2 /Ob2;
+# el CRT sigue siendo el de depuracion (/MDd, _DEBUG, mismo _ITERATOR_DEBUG_LEVEL), asi que enlaza con
+# nuestro codigo, que sigue en /Od. Las variables se restauran tras add_subdirectory (cada directorio
+# toma una copia al crearse). ZW_OPTIMIZE_DEPS_IN_DEBUG=OFF lo desactiva (para depurar dynarmic).
+option(ZW_OPTIMIZE_DEPS_IN_DEBUG "Compilar dynarmic optimizado en la config Debug" ON)
+set(_zw_saved_c_debug "${CMAKE_C_FLAGS_DEBUG}")
+set(_zw_saved_cxx_debug "${CMAKE_CXX_FLAGS_DEBUG}")
+if(MSVC AND ZW_OPTIMIZE_DEPS_IN_DEBUG)
+  foreach(_v CMAKE_C_FLAGS_DEBUG CMAKE_CXX_FLAGS_DEBUG)
+    string(REGEX REPLACE "/RTC[1csu]+" "" ${_v} "${${_v}}")
+    string(REGEX REPLACE "/O[d012xs]" "" ${_v} "${${_v}}")
+    string(REGEX REPLACE "/Ob[0-3]" "" ${_v} "${${_v}}")
+    set(${_v} "${${_v}} /O2 /Ob2")
+  endforeach()
+endif()
 FetchContent_MakeAvailable(dynarmic)
+set(CMAKE_C_FLAGS_DEBUG "${_zw_saved_c_debug}")
+set(CMAKE_CXX_FLAGS_DEBUG "${_zw_saved_cxx_debug}")
 
 # Parche local a dynarmic (T3): su manejador de excepciones de Windows llama al callback de fastmem
 # reservando solo 8 bytes de pila; la ABI x64 exige 32 de "shadow space" (+8 de alineacion). Con MSVC
