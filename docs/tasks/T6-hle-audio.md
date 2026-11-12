@@ -1,23 +1,28 @@
-# T6 — HLE OpenSL ES → SDL2 audio
+# T6 — Audio: backend SDL2 para `android.media.AudioTrack` (+ stubs OpenSL)
 
-Lee `docs/PLAN.md`, `docs/ANALYSIS.md` (sección audio), `docs/CONTRACTS.md`. Repo en `main`.
+Lee `docs/PLAN.md`, `docs/ANALYSIS.md` **§8 (opción A)**, `docs/CONTRACTS.md`. Repo en `main`.
+
+> Cambio respecto al plan inicial: T1 confirmó que el juego emite audio por `android.media.AudioTrack` vía JNI
+> (`s_androidAPILevel = 3` → `_InitAT`), no por OpenSL. Seguimos el comportamiento original.
 
 ## Objetivo
-Implementar `slCreateEngine` y los objetos/interfaces OpenSL ES que usa el juego (`SL_IID_ENGINE`, `SL_IID_PLAY`, `SL_IID_BUFFERQUEUE`, y cualquiera
-adicional que T1 identifique: volume, outputmix…) como **objetos guest**: estructuras con vtables cuyos punteros a función son thunks HLE,
-siguiendo el layout C de OpenSL ES 1.0.1 (`SLObjectItf` = puntero a puntero a struct de punteros a función, 32-bit).
-`SL_IID_*` son variables importadas: deben resolver a structs `SLInterfaceID` en memoria guest.
+Un backend de audio en C++ puro (sin conocer JNI) que T7 envolverá como la clase Java emulada `android/media/AudioTrack`.
 
 ## Requisitos
-- Player PCM con buffer queue: `Enqueue` copia o referencia el buffer guest; un `SDL_AudioStream`/callback consume y, al terminar cada buffer, invoca el callback guest de `RegisterCallback` vía `call_guest` **desde un hilo guest dedicado** (no desde el hilo de audio de SDL directamente si el contrato de T3 lo prohíbe).
-- `SetPlayState`, `GetState`, `Clear`, `Destroy`, `Realize`, `GetInterface`; formatos PCM 8/16 bits, mono/estéreo, sample rate del data locator con resampling por SDL.
-- Volumen/mute global configurable (para `nativeVoxMute` y el menú de opciones de T9).
+- API en `src/hle/audio/audio_track.h` (namespace `zw::audio`), por ejemplo:
+  `int native_output_sample_rate()` → 44100; `int min_buffer_size(rate, channelCfg, encoding)` → ≥ 8192 bytes;
+  `class Track { Track(streamType, rate, channelCfg, encoding, bufferBytes, mode); void play(); void pause(); void stop(); void release(); int write(const int16_t* pcm, int bytes); int play_state(); }`.
+  Documenta la API en `docs/CONTRACTS.md` en una sección **"Audio (T6)"** (solo esa sección; avisa con `ask` si T3 aún no creó el archivo).
+- Salida SDL2 (`SDL_OpenAudioDevice` + `SDL_AudioStream` o cola), PCM 16-bit estéreo 44.1 kHz (convertir si `channelCfg`/rate difieren).
+- `write` encola en un ring buffer y **bloquea** cuando hay más de ~100 ms en cola (§8 de ANALYSIS); nunca bloquea indefinidamente si el dispositivo está pausado/cerrado.
+- Volumen maestro y mute (para `nativeVoxMute` / menú de T9), pausa/reanudar global (minimizar ventana).
+- **OpenSL ES**: los 4 imports (`slCreateEngine`, `SL_IID_ENGINE/PLAY/BUFFERQUEUE`) deben resolverse para que el loader no falle: `slCreateEngine` devuelve `SL_RESULT_FEATURE_UNSUPPORTED` y los `SL_IID_*` apuntan a structs guest válidos. Registra estos HLE con la API de `CONTRACTS.md`.
 
 ## Entregables
-`src/hle/audio/`, tests en `tests/hle_audio/` (simular desde código guest de prueba o llamadas directas: encolar seno 440 Hz, verificar que se llama el callback N veces; modo sin dispositivo con driver `dummy` de SDL para CI).
+`src/hle/audio/`, tests en `tests/hle_audio/` (driver SDL `dummy` o `disk`: escribir 1 s de seno 440 Hz por la API, comprobar duración/bloqueo, pausa/reanudar, volumen 0).
 
 ## Evidencia
-Tests en verde con salida; lista de imports OpenSL cubiertos.
+Tests en verde con salida pegada; firma final de la API.
 
 ## Restricciones
-Edita solo `src/hle/audio/`, `tests/hle_audio/` y su CMake. Commits `zombiewood(T6): ...`, sin push.
+Edita solo `src/hle/audio/`, `tests/hle_audio/`, su CMake y tu sección de `docs/CONTRACTS.md`. Commits `zombiewood(T6): ...`, sin push.
