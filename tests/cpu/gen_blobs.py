@@ -53,17 +53,21 @@ def gen_cpu_blob(tmp):
 
 def gen_testlib(tmp):
     src = os.path.join(HERE, "..", "loader", "testlib.c")
-    obj = os.path.join(tmp, "testlib.o")
-    so = os.path.join(tmp, "libzwtest.so")
-    flags = [f for f in CFLAGS if f not in ("-fno-unwind-tables", "-fno-asynchronous-unwind-tables")] + ["-funwind-tables"]
-    run([CLANG, *flags, "-c", src, "-o", obj])
-    run([LLD, "-shared", "--hash-style=sysv", "-soname", "libzwtest.so", "-z", "now", "-Bsymbolic",
-         "--no-rosegment", "-o", so, obj])
-    with open(so, "rb") as fh:
-        data = fh.read()
-    with open(os.path.join(HERE, "..", "loader", "testlib_blob.inc"), "w", newline="\n") as f:
-        f.write("// GENERADO por tests/cpu/gen_blobs.py a partir de tests/loader/testlib.c. No editar.\n")
-        emit_bytes(f, "kTestLib", data)
+    flags = [f for f in CFLAGS if f not in ("-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-fvisibility=default")]
+    flags += ["-funwind-tables", "-fvisibility=hidden"]
+    out = os.path.join(HERE, "..", "loader", "testlib_blob.inc")
+    with open(out, "w", newline=chr(10)) as f:
+        f.write("// GENERADO por tests/cpu/gen_blobs.py a partir de tests/loader/testlib.c. No editar." + chr(10))
+        prev = []
+        for define, soname, var in (("ZW_LIB_A", "libzwtest.so", "kTestLibA"), ("ZW_LIB_B", "libzwtest2.so", "kTestLibB")):
+            obj = os.path.join(tmp, soname + ".o")
+            so = os.path.join(tmp, soname)
+            run([CLANG, *flags, "-D" + define, "-c", src, "-o", obj])
+            run([LLD, "-shared", "--hash-style=sysv", "-soname", soname, "-z", "now", "-Bsymbolic",
+                 "--allow-shlib-undefined", "-o", so, obj, *prev])
+            prev.append(so)
+            with open(so, "rb") as fh:
+                emit_bytes(f, var, fh.read())
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:

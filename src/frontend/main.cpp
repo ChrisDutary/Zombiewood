@@ -3,6 +3,8 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <vector>
 
 #include "backends/imgui_impl_opengl3.h"
 #include "backends/imgui_impl_sdl2.h"
@@ -12,9 +14,19 @@
 #include "cpu/deps_check.h"
 #include "frontend/window.h"
 #include "imgui.h"
+#include "loader/load_only.h"
 
 int main(int argc, char** argv) {
   zw::log::Init();
+
+  // --load-only <ruta .so> [mas .so...]: diagnostico del loader/CPU (T3), sin ventana ni SDL.
+  for (int i = 1; i < argc; ++i) {
+    if (!std::strcmp(argv[i], "--load-only")) {
+      std::vector<std::filesystem::path> libs(argv + i + 1, argv + argc);
+      if (libs.empty()) { zw::log::Error("uso: zombiewood --load-only <ruta .so> [mas .so...]"); return 2; }
+      return zw::loader::RunLoadOnly(libs);
+    }
+  }
   zw::log::Info("Zombiewood (T2 esqueleto) - home: {}", zw::paths::Home().string());
 
   int smoke_frames = -1;  // --smoke-test[=N]: salir solo tras N frames (por defecto 120)

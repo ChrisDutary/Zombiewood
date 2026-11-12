@@ -54,8 +54,11 @@ gaddr h2g(const void* p);                    // nullptr -> 0; error en log (y 0)
 | `Zone::Libs` | `0x10000000–0x1FFFFFFF` | `.so` cargados. El primero queda en `0x10000000` ⇒ `guest = 0x10000000 + vaddr ELF` de ANALYSIS.md |
 | `Zone::Heap` | `0x20000000–0x7FFFFFFF` | heap (`Alloc`) y `MapAnywhere(Zone::Heap)` |
 | `Zone::Stacks` | `0x80000000–0x8FFFFFFF` | pilas de hilos (con página de guarda) y bloques TLS |
+| kuser | `0xFFFF0000–0xFFFF0FFF` | *kuser helpers* de Linux ARM (`__kuser_cmpxchg` `0xffff0fc0`, `__kuser_memory_barrier` `0xffff0fa0`, `__kuser_cmpxchg64` `0xffff0f60`, `__kuser_get_tls` `0xffff0fe0`), implementados en código guest con `LDREX/STREX`. El `.so` los llama por dirección fija (atómicos de protobuf); no son imports |
 
 Tocar desde el host una dirección guest no mapeada = violación de acceso; el runtime la vuelca con el estado guest y aborta.
+El JIT accede a la memoria con una tabla de páginas (sin excepciones del host): un acceso **del guest** a memoria no mapeada
+acaba en `GuestFault` con volcado, no en un crash.
 Si el puntero viene del guest y puede ser basura, valida con `GuestMemory::IsMapped(addr, size)`.
 
 ### 1.2 Páginas
@@ -322,6 +325,10 @@ void     threads::AddExitHook(std::function<void(Cpu&)>);    // en el hilo, al t
 void     threads::DetachCurrent();                           // para hilos host adjuntados implícitamente
 ```
 
+Hilos host adjuntados implícitamente (los que llaman a `call_guest`/`Cpu::Current()` sin venir de `threads::Create`): los
+*start hooks* corren en el attach; los *exit hooks* **solo** si el hilo llama a `threads::DetachCurrent()` (si el hilo host
+termina sin llamarlo, su `Cpu` se destruye sin ejecutar hooks).
+
 `pthread_create` (T4):
 
 ```cpp
@@ -417,7 +424,15 @@ Ante un fallo guest (memoria no mapeada, instrucción indefinida, `bkpt`) el run
 la dirección guest implicada y `DumpState`, y termina el proceso.
 
 Variables de entorno: `ZW_TRACE_IMPORTS`, `ZW_TRACE_FILTER`, `ZW_ABORT_ON_UNIMPLEMENTED`, `ZW_TRACE_INIT=1` (una línea por
-constructor de `.init_array`), `ZW_JIT_CACHE_MB` (tamaño de caché de código por hilo).
+constructor de `.init_array`), `ZW_JIT_CACHE_MB` (caché de código por hilo, 64 por defecto), `ZW_DEBUG_VEH=1` (vuelca cada
+excepción del host de primera oportunidad), `ZW_FASTMEM=1` (experimental, ver abajo).
+
+**Acceso a memoria del JIT.** Por defecto dynarmic usa tabla de páginas (`page_table` con offset absoluto) y el monitor
+exclusivo global para `LDREX/STREX`. `ZW_FASTMEM=1` activa *fastmem* (+ exclusivos por `cmpxchg`), más rápido, pero **no es
+seguro con este dynarmic en MSVC**: su manejador de excepciones de Windows (`exception_handler_windows.cpp`) llama al
+callback de fastmem reservando solo 8 bytes de pila en vez del *shadow space* de 32 de la ABI x64; el primer fallo de
+fastmem (cualquier acceso guest a memoria no mapeada) corrompe la dirección de retorno y mata el proceso. Arreglo pendiente
+(fuera de T3, toca `cmake/ZwDependencies.cmake`): parchear dynarmic (`sub rsp, 8` → `sub rsp, 0x28` en ese manejador).
 
 ---
 
@@ -434,3 +449,26 @@ try {
 } catch (const zw::GuestFault& f) { zw::log::Error("{}", f.what()); }
   catch (const zw::GuestExit& e)  { /* salir con e.code */ }
 ```
+
+---
+
+## 10. `--load-only` y HLE mínima de arranque (`loader/load_only.h`)
+
+```
+zombiewood --load-only <ruta .so> [más .so...]        (o el ejecutable suelto zw_loadonly, mismos argumentos)
+```
+
+Carga las libs en orden, imprime segmentos/relocaciones/imports (con la lista de los que no tienen handler), ejecuta
+`.init_array` y `JNI_OnLoad` con un `JavaVM` falso y resume qué imports sin handler se llegaron a invocar. Código de salida 0
+si llegó al final. Útil para T4–T7: al enlazar vuestro `Register()` antes de `RunLoadOnly`, la lista de "sin handler" baja.
+
+- `loader::bootstrap::Register()`: ~100 imports mínimos de bionic (malloc, `mem*`/`str*`, `printf` básico, `pthread_key_*`,
+  `__cxa_*`, tiempo, libm, tablas `_ctype_`…) **solo para nombres que nadie haya registrado**. Es andamiaje de T3 para
+  `--load-only` y tests; no sustituye a T4 (mutex/cond son no-ops, sin stdio). T8 no debe llamarla.
+- `loader::bootstrap::FakeJavaVM()`: `JavaVM*` guest con `GetEnv/AttachCurrentThread` y un `JNIEnv` de 232 slots genéricos
+  que registran cada llamada (`[jni falso] … FindClass(…)`) y devuelven handles ficticios. T7 lo reemplaza.
+
+Estado medido con solo la HLE mínima (win-debug): `libZombieWood.so` carga en `0x10000000` (56 376 RELATIVE, 6 467 ABS32,
+18 GLOB_DAT, 356 JUMP_SLOT), los 552 constructores se ejecutan sin fallos y `JNI_OnLoad` devuelve `0x10004`
+(`AndroidOS::Init` encuentra `SUtils`, `Device` y `GameInstaller`). Durante ese arranque el `.so` solo invoca tres imports sin
+handler: `wctob`, `btowc` y `wctype` (inicialización de `std::locale`/`ctype<wchar_t>` de gnustl).

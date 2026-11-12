@@ -243,7 +243,8 @@ std::size_t Count();     // hilos guest vivos (incluye los "attach" implicitos)
 // Hooks que se ejecutan EN el hilo guest: al arrancar (antes de entry) y al terminar
 // (despues de entry, antes de destruir el Cpu; ahi van los destructores de pthread_key,
 // DetachCurrentThread...). Tambien se ejecutan para hilos host adjuntados con Cpu::Current()
-// (start: en el attach; exit: en DetachCurrent()/fin del hilo host). Registrar antes de crear hilos.
+// (start: en el attach; exit: SOLO en DetachCurrent(); si el hilo host termina sin llamarlo, su Cpu
+// se destruye sin ejecutar hooks). Registrar antes de crear hilos.
 void AddStartHook(std::function<void(Cpu&)> fn);
 void AddExitHook(std::function<void(Cpu&)> fn);
 // Destruye el Cpu del hilo host actual (hilos adjuntados implicitamente). No-op si no hay.
