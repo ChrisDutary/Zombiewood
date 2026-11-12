@@ -474,3 +474,33 @@ Estado medido con solo la HLE mínima (win-debug): `libZombieWood.so` carga en `
 18 GLOB_DAT, 356 JUMP_SLOT), los 552 constructores se ejecutan sin fallos y `JNI_OnLoad` devuelve `0x10004`
 (`AndroidOS::Init` encuentra `SUtils`, `Device` y `GameInstaller`). Durante ese arranque el `.so` solo invoca tres imports sin
 handler: `wctob`, `btowc` y `wctype` (inicialización de `std::locale`/`ctype<wchar_t>` de gnustl).
+
+---
+
+## Audio (T6) — `hle/audio/audio_track.h`, `hle/audio/audio_hle.h`
+
+Backend C++ puro (sin JNI) de `android.media.AudioTrack` (modo STREAM) sobre SDL2; T7 lo envuelve como clase Java emulada.
+CMake: `target_link_libraries(x PRIVATE zw_hle_audio)`; `#include "audio_track.h"` (namespace `zw::audio`).
+
+```cpp
+int  audio::native_output_sample_rate();                               // 44100
+int  audio::min_buffer_size(int rate, int channelCfg, int encoding);   // bytes, >= 8192
+
+audio::Track t(streamType, rate, channelCfg, encoding, bufferBytes, mode = kModeStream);
+// channelCfg: kChannelOutMono=4 / kChannelOutStereo=12 (0xC); encoding: kEncodingPcm16=2 / kEncodingPcm8=3
+t.play(); t.pause(); t.stop() /*descarta la cola*/; t.release() /*despierta writers; idempotente*/;
+int n = t.write(const void* pcm, int bytes);  // bytes aceptados; -1 si liberada
+int s = t.play_state();                        // kStateStopped=1, kStatePaused=2, kStatePlaying=3
+```
+
+- `write` copia a una cola y **bloquea** mientras haya > ~100 ms en cola y la pista esté en `PLAYING` (y no en pausa global).
+  Pausada/parada/liberada **nunca** bloquea (acepta hasta ~200 ms y devuelve lo aceptado). `release()` desbloquea a un writer.
+- SDL abre un dispositivo por pista (formato nativo de la pista; SDL convierte rate/canales/bits). Si no hay dispositivo, un hilo
+  consume a tiempo real (el juego no se bloquea). Un *underrun* emite silencio.
+- Control global (menú T9, `nativeVoxMute`, minimizar): `audio::set_master_volume(0..1)`, `set_muted(bool)`, `set_global_paused(bool)`
+  (pausa/reanuda todas las pistas sin cambiar su `play_state`). Se aplican en el callback, afectan también a datos ya encolados.
+- Tests/CI: `audio::set_driver("dummy")` antes de crear la primera pista; `audio::set_tap(fn)` observa lo que va al dispositivo.
+- **OpenSL ES** (`zw::hle::audio::Register()`, `audio_hle.h`; T8 la llama antes de `loader::Load`): define `SL_IID_ENGINE`,
+  `SL_IID_PLAY`, `SL_IID_BUFFERQUEUE` (variables puntero a `SLInterfaceID_` de 16 bytes con los GUID reales) y registra
+  `slCreateEngine`, que devuelve `SL_RESULT_FEATURE_UNSUPPORTED` (12) y pone `*pEngine = NULL`. El juego usa `AudioTrack`
+  (`s_androidAPILevel = 3`), así que OpenSL es camino muerto.
