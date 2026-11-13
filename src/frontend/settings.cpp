@@ -41,6 +41,9 @@ Settings Settings::Load(const GameOptions* opt) {
   s.fullscreen = ConfigGet(cfg, "fullscreen", false);
   s.fps_limit = ConfigGet(cfg, "fps_limit", 60);
   s.show_fps = ConfigGet(cfg, "show_fps", false);
+  s.cursor = ConfigGet<std::string>(cfg, "cursor", "zombie");
+  if (s.cursor != "zombie" && s.cursor != "system") s.cursor = "zombie";
+  s.cursor_size = std::clamp(ConfigGet(cfg, "cursor_size", 48), 16, 128);
   s.menu_bar = ConfigGet(cfg, "menu_bar", false);
   s.pause_on_focus_loss = ConfigGet(cfg, "pause_on_focus_loss", false);
   s.linear_filter = ConfigGet(cfg, "linear_filter", true);
@@ -85,6 +88,8 @@ void Settings::MergeInto(nlohmann::json& cfg) const {
     cfg["fps_limit"] = fps_limit;
   }
   cfg["show_fps"] = show_fps;
+  cfg["cursor"] = cursor;
+  cfg["cursor_size"] = cursor_size;
   cfg["menu_bar"] = menu_bar;
   cfg["pause_on_focus_loss"] = pause_on_focus_loss;
   cfg["volume"] = volume;

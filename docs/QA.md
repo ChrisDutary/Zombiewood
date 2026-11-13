@@ -71,3 +71,12 @@ tras el arreglo B1.
   con cada build)
 - Contenido: `zombiewood.exe` (6.3 MiB), `SDL2.dll`, `libEGL.dll`, `libGLESv2.dll`, `z.dll`, `gamecontrollerdb.txt`, `readme.txt`,
   `README.md`, `licenses/` (7 ficheros). Sin datos del juego.
+
+## v0.2.0 — cursor zombi (2026-11-13)
+
+| Prueba | Resultado | Evidencia / notas |
+|---|---|---|
+| Build `win-release` + ctest | OK | 8/8 tests; recurso RCDATA 102 incrustado (`-- Cursor del juego: …`) |
+| Zip 0.2.0 descomprimido en carpeta vacía, 900 frames | OK | sale con código 0; log: `cursor: zombi 48px (hotspot 1,0)` |
+| Cursor visible sobre la ventana, cambio on/off y tamaño desde F1 | NO PROBADO a ojo | aplicado vía `SDL_SetCursor` en el hilo UI; pendiente de confirmación visual del usuario |
+| Sin el recurso (`resources/zombiewood_cursor.bin` ausente) | OK por diseño | CMake no añade `cursor.rc`; el juego usa el cursor de Windows |

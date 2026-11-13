@@ -25,6 +25,8 @@ struct Settings {
   bool vsync = true, fullscreen = false, pause_on_focus_loss = false, linear_filter = true;
   int fps_limit = 60;
   bool show_fps = false;
+  std::string cursor = "zombie";  // "zombie" (incrustado en el exe, si existe) | "system" (cursor de Windows)
+  int cursor_size = 48;           // px; se usa el tamano incrustado mas cercano (32/48/64/96)
   bool menu_bar = false;  // barra de menu visible al arrancar (F1 la alterna)
   // --- audio ---
   float volume = 1.0f;        // 0..1, audio del juego (Vox -> AudioTrack)

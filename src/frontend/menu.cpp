@@ -306,6 +306,25 @@ void Menu::DrawGraphics() {
   if (ImGui::Checkbox("Mostrar FPS", &s_->show_fps)) Changed();
   if (ImGui::Checkbox("Pausar al perder el foco", &s_->pause_on_focus_loss)) Changed();
   ImGui::Separator();
+  bool zcur = s_->cursor == "zombie";
+  if (ImGui::Checkbox("Cursor zombi", &zcur)) {
+    s_->cursor = zcur ? "zombie" : "system";
+    if (act_.apply_cursor) act_.apply_cursor();
+    Changed();
+  }
+  ImGui::BeginDisabled(!zcur);
+  static const int kCursorSizes[] = {32, 48, 64, 96};
+  static const char* kCursorNames[] = {"Pequeno (32 px)", "Normal (48 px)", "Grande (64 px)", "Muy grande (96 px)"};
+  int ci = 1;
+  for (int i = 0; i < 4; ++i)
+    if (s_->cursor_size == kCursorSizes[i]) ci = i;
+  if (ImGui::Combo("Tamano del cursor", &ci, kCursorNames, 4)) {
+    s_->cursor_size = kCursorSizes[ci];
+    if (act_.apply_cursor) act_.apply_cursor();
+    Changed();
+  }
+  ImGui::EndDisabled();
+  ImGui::Separator();
   if (ImGui::Checkbox("Saltar videos", &s_->skip_videos)) Changed();
   ImGui::BeginDisabled(s_->skip_videos);
   if (ImGui::Checkbox("Logo de Gameloft al arrancar", &s_->play_logo)) Changed();

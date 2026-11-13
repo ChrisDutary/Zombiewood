@@ -11,6 +11,9 @@ data/
 resources/*.ico
 icon-logo*.jpg
 icon-logo*.png
+# Cursor: arte de terceros; cada usuario lo genera con tools/make_cursor.ps1
+resources/*.bin
+cursor_icon*.png
 
 # Build
 build/

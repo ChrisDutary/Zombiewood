@@ -1,5 +1,5 @@
 add_library(zw_frontend STATIC window.cpp game.cpp input.cpp png.cpp
-                               settings.cpp setup.cpp menu.cpp saves.cpp video.cpp)
+                               settings.cpp setup.cpp menu.cpp saves.cpp video.cpp cursor.cpp)
 target_link_libraries(zw_frontend PUBLIC zw_core zw_imgui zw_installer zw_hle_libc SDL2::SDL2
                                   PRIVATE zw_loader zw_cpu zw_hle_gles zw_hle_audio zw_jni
                                           unofficial::angle::libGLESv2
@@ -16,6 +16,17 @@ if(WIN32 AND EXISTS "${ZW_ICON}")
   message(STATUS "Icono de la app: ${ZW_ICON}")
 else()
   message(STATUS "Sin icono de la app (genera resources/zombiewood.ico con tools/make_icon.ps1)")
+endif()
+
+# Cursor zombi (v0.2.0): solo si existe resources/zombiewood_cursor.bin (tools/make_cursor.ps1); no se versiona.
+# Sin el, el juego usa el cursor normal de Windows.
+set(ZW_CURSOR "${PROJECT_SOURCE_DIR}/resources/zombiewood_cursor.bin")
+if(WIN32 AND EXISTS "${ZW_CURSOR}")
+  target_sources(zombiewood PRIVATE "${PROJECT_SOURCE_DIR}/resources/cursor.rc")
+  set_property(SOURCE "${PROJECT_SOURCE_DIR}/resources/cursor.rc" APPEND PROPERTY OBJECT_DEPENDS "${ZW_CURSOR}")
+  message(STATUS "Cursor del juego: ${ZW_CURSOR}")
+else()
+  message(STATUS "Sin cursor del juego (genera resources/zombiewood_cursor.bin con tools/make_cursor.ps1)")
 endif()
 target_link_libraries(zombiewood PRIVATE zw_frontend zw_loader zw_cpu zw_hle_libc zw_hle_gles zw_hle_audio zw_jni
                                           SDL2::SDL2main)

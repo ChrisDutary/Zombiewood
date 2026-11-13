@@ -66,7 +66,7 @@ Todo es remapeable desde **F1 → Controles** (botón *Cambiar* y pulsa una tecl
 El menú **F1** (Zombiewood · Gráficos · Audio · Controles · Carpetas · Ayuda) guarda al instante en `zombiewood.json`:
 backend gráfico (D3D11 / OpenGL; pide reiniciar), resolución interna, filtrado, VSync, límite de FPS, pantalla completa,
 volúmenes, saltar vídeos, idioma (en, fr, de, es, it, pt, ja, ko, zh, ru; al reiniciar), zona muerta del mando, copias de
-seguridad. La referencia completa de claves, variables de entorno y opciones de línea de comandos está en
+seguridad, y el **cursor zombi** (on/off y tamaño 32/48/64/96 px; claves `cursor` y `cursor_size`). La referencia completa de claves, variables de entorno y opciones de línea de comandos está en
 [`docs/BUILD.md`](docs/BUILD.md).
 
 Las partidas están en `saves/` y el port hace copias automáticas en `saves_backup/` (al arrancar y cada vez que el juego
@@ -118,6 +118,21 @@ pwsh tools/make_icon.ps1 -Source C:\ruta\a\tu\icono.jpg   # escribe resources/zo
 ```
 
 CMake lo detecta y lo usa como icono del exe (escritorio, Explorador, barra de tareas y ventana).
+
+### Cursor del juego (opcional)
+
+Igual que el icono, el cursor no se versiona. Para incrustarlo, genera el recurso desde un PNG con transparencia (usa la
+figura de la mitad izquierda de la imagen; `-Whole` para usar la imagen entera):
+
+```powershell
+pwsh tools/make_cursor.ps1 -Source C:\ruta\a\cursor.png   # escribe resources/zombiewood_cursor.bin
+```
+
+Sin él, el juego usa el cursor normal de Windows.
+
+## Historial de cambios
+
+Todas las versiones y mejoras están en [`CHANGELOG.md`](CHANGELOG.md). Descargas en la sección *Releases* del repositorio.
 
 ## Créditos y licencias de terceros
 

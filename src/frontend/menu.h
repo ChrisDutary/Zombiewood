@@ -28,6 +28,7 @@ struct MenuActions {
   std::function<void()> apply_resolution;      // internal_w/h / follow_window cambiados
   std::function<void()> apply_audio;           // volume / mute cambiados
   std::function<void()> apply_input;           // settings.input cambiado
+  std::function<void()> apply_cursor;          // cursor / cursor_size cambiados (se aplica en el hilo UI)
   std::function<void(bool)> set_paused;
   std::function<void()> screenshot;
   std::function<void()> backup_now;

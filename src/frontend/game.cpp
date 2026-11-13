@@ -28,6 +28,7 @@
 #include "core/paths.h"
 #include "cpu/cpu.h"
 #include "cpu/hle.h"
+#include "frontend/cursor.h"
 #include "frontend/input.h"
 #include "frontend/menu.h"
 #include "frontend/png.h"
@@ -54,7 +55,7 @@ struct Ev {
   float f = 0;
   SDL_Event raw{};  // evento SDL original (para ImGui); raw.type == 0 si no hay
 };
-enum UserCode { kUserMinimize = 1, kUserDone = 2, kUserFullscreen = 3 };
+enum UserCode { kUserMinimize = 1, kUserDone = 2, kUserFullscreen = 3, kUserCursor = 4 };
 
 struct Shared {
   std::mutex mu;
@@ -422,6 +423,8 @@ class GlThread {
     MenuActions a;
     a.apply_vsync = [this] { SDL_GL_SetSwapInterval(s_.vsync ? 1 : 0); };
     a.set_fullscreen = [](bool on) { PostUser(kUserFullscreen, on ? 1 : 0); };
+    // Se pasa el valor en el evento (no se lee Settings desde el hilo UI): tamano > 0 = zombi, 0 = Windows.
+    a.apply_cursor = [this] { PostUser(kUserCursor, s_.cursor == "zombie" ? s_.cursor_size : 0); };
     a.apply_resolution = [this] {
       if (direct_) return;
       if (s_.follow_window) pending_resize_ = true;
@@ -863,6 +866,7 @@ int RunGame(const GameOptions& opt) {
     return 1;
   }
   if (s.fullscreen) SDL_SetWindowFullscreen(win.sdl(), SDL_WINDOW_FULLSCREEN_DESKTOP);
+  cursor::Apply(s.cursor, s.cursor_size);  // hilo UI; el juego no lo ve (solo cambia el puntero del sistema)
 
   // --- primer arranque: instalar los datos del APK del usuario ---
   SetupOptions so;
@@ -1115,6 +1119,10 @@ int RunGame(const GameOptions& opt) {
           if (ev.type == g_user_event && ev.user.code == kUserFullscreen) {
             fullscreen = reinterpret_cast<std::intptr_t>(ev.user.data1) != 0;
             SDL_SetWindowFullscreen(win.sdl(), fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+          }
+          if (ev.type == g_user_event && ev.user.code == kUserCursor) {
+            const int size = static_cast<int>(reinterpret_cast<std::intptr_t>(ev.user.data1));
+            cursor::Apply(size > 0 ? "zombie" : "system", size);
           }
           break;
       }

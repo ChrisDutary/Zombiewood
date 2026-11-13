@@ -1,0 +1,3 @@
+// Cursor del juego (RCDATA 102), leido por src/frontend/cursor.cpp.
+// zombiewood_cursor.bin no se versiona: generalo con  pwsh tools/make_cursor.ps1 -Source <imagen.png>.
+102 RCDATA "zombiewood_cursor.bin"

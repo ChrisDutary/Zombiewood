@@ -90,6 +90,7 @@ Todas las claves son opcionales (los comentarios son solo de esta página):
   "internal_follows_window": false,                 // true: resolución interna = ventana (GL2JNILib.resize al cambiar)
   "linear_filter": true, "vsync": true, "fps_limit": 60,   // 0 = sin límite; el juego usa tiempo real
   "show_fps": false, "menu_bar": false,             // contador de FPS; barra de menú visible al arrancar
+  "cursor": "zombie", "cursor_size": 48,            // (0.2.0) cursor zombi incrustado | "system"; 32/48/64/96 px
   "pause_on_focus_loss": false,                     // minimizar siempre pausa (pause + nativeVoxSuspend)
   "volume": 1.0, "video_volume": 1.0, "mute": false,
   "skip_videos": false, "play_logo": true,          // vídeos de res/raw (logo al arrancar, intro, moviecomplete)
