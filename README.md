@@ -1,7 +1,6 @@
 # Zombiewood para Windows (port nativo)
 
-Runtime para jugar **Zombiewood 1.5.3** (juego de Android, de Gameloft) de forma nativa en Windows 10/11 x64, al estilo
-de los ports de Ship of Harkinian: este proyecto es **solo el entorno de ejecución**. Carga la biblioteca nativa del propio
+Runtime para jugar **Zombiewood 1.5.3** (juego de Android, de Gameloft) de forma nativa en Windows 10/11 x64, este proyecto es **solo el entorno de ejecución**. Carga la biblioteca nativa del propio
 juego (`libZombieWood.so`, ARM de 32 bits) con un cargador ELF propio, la ejecuta con un recompilador JIT (dynarmic) y
 sustituye Android por Windows: libc/pthread de bionic, OpenGL ES 2 (ANGLE sobre Direct3D 11), audio (SDL2), JNI, vídeo
 (Media Foundation) y entrada (teclado, ratón, mando → toques virtuales sobre el HUD).
