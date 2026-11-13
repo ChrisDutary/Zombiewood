@@ -39,31 +39,82 @@ La primera configuración tarda bastante (vcpkg compila ANGLE y SDL2 desde fuent
 
 ## Ejecutar
 
+Una carpeta con `zombiewood.exe` + `SDL2.dll`, `libEGL.dll`, `libGLESv2.dll` y `z.dll` es todo lo que necesita el usuario
+final; el juego original lo aporta él (nunca va en el repo). `<home>` es `ZOMBIEWOOD_HOME` si existe, si no la carpeta del exe.
+
 ```bat
-set ZOMBIEWOOD_HOME=C:\Users\chdut\ZombiewoodDev\run
 C:\Users\chdut\ZombiewoodDev\build\win-release\src\frontend\zombiewood.exe
 ```
 
-`<home>` es `ZOMBIEWOOD_HOME` si existe, si no la carpeta del exe. Ahí van `zombiewood.json`, `logs/zombiewood.log`,
-`data/`, `saves/` (partida: `player.dat`, `zomb.dat`, `level.dat`, `zw_prefs.json`…), `screens/` y, opcional,
-`gamecontrollerdb.txt`. El juego original lo aporta el usuario (`game_dir`), nunca va en el repo.
+### Primer arranque (instalador, T9)
 
-`zombiewood.json` (todas las claves son opcionales; los comentarios son solo de esta página):
+Si no hay datos (`<home>/data/lib/libZombieWood.so` + OBB main) aparece un asistente en la propia ventana:
+**Elegir APK… (Enter)** abre el diálogo de Windows. Vale:
+
+- el APK grande (`assets/archiveObbCache.zip.001…00N` con los OBB dentro), o
+- el APK original + `main.1501…obb` / `patch.15325…obb` (se buscan junto al APK y en `obb/`; si no están, se piden con otro diálogo).
+
+Se extrae en streaming a `<home>/data/`: `lib/libZombieWood.so`, `lib/libgenerator.so`, `obb/main…obb`, `obb/patch…obb`,
+`res/raw/*.mp4` (+ textos), `assets/colors.conf`, `assets/families.list` e `install.json` (origen, SHA-256, avisos). Se
+verifica el SHA-256 de `libZombieWood.so` (1.5.3 = `2855ed9f…fa967c`) y de los OBB; si no coinciden se avisa (otra versión
+puede no funcionar). Con el APK de 306 MB tarda ~1–3 s en un SSD. Después se escribe `zombiewood.json` completo y **Jugar (Enter)**.
+
+Sin interfaz: `zombiewood --install=<apk> [--obb=<main.obb> --obb=<patch.obb>] [--install-only]`; `--reinstall` vuelve a
+abrir el asistente aunque haya datos.
+
+### Carpetas en `<home>`
+
+| Carpeta / fichero | Contenido |
+|---|---|
+| `zombiewood.json` (+ `.bak`) | configuración (la edita el menú F1) |
+| `data/` | datos del juego instalados + `/sdcard/android/data/<pkg>/files` del guest (lo que escribe el juego) |
+| `saves/` | `/data/data/<pkg>/` del guest: `player.dat`, `zomb.dat`, `level.dat`, `zw_prefs.json`… |
+| `saves_backup/` | copias automáticas: `<fecha>_inicio/` al arrancar y `<fecha>/` con la versión anterior de cada save que el juego sobrescribe (se conservan `backups_keep`); `shadow/` es interno |
+| `logs/` | `zombiewood.log` + `zombiewood.1.log`…`.4.log` (rotación al arrancar y al pasar de 32 MiB). Las líneas Info idénticas repetidas (p. ej. el spam "Sending TapJoy request… / Response not valid" del juego sin red) se resumen como `(xN en 30 s, suprimidas) …`; `ZW_LOG_NODEDUP=1` lo desactiva |
+| `screens/` | capturas (F12) |
+| `imgui.ini` | posiciones de las ventanas del menú |
+| `gamecontrollerdb.txt` | opcional, mapeos extra de mandos SDL |
+
+### `zombiewood.json`
+
+Todas las claves son opcionales (los comentarios son solo de esta página):
 
 ```json
 {
-  "game_dir": "C:/Users/chdut/ZombiewoodDev/gamedata",   // lib/libZombieWood.so + obb/*.obb (+ assets del APK)
-  "lib": "...", "assets_dir": "...", "screens_dir": "...",  // sobreescriben lo derivado de game_dir / home
+  "game_dir": "data",                     // lib/, obb/, res/raw/, assets/ (relativa a <home> o absoluta)
+  "lib": "...", "assets_dir": "...", "videos_dir": "...", "screens_dir": "...",  // sobreescriben lo derivado
   "vfs": { "data_dir": "data", "saves_dir": "saves", "obb_dir": "..." },
-  "width": 1280, "height": 720, "fullscreen": false,      // ventana
-  "internal_width": 1280, "internal_height": 720,         // resolución a la que dibuja el juego (se escala con letterbox)
-  "internal_follows_window": false,                       // true: resolución interna = ventana (GL2JNILib.resize al cambiar)
-  "linear_filter": true, "vsync": true, "fps_limit": 60,  // fps_limit 0 = sin límite; el juego usa tiempo real
-  "pause_on_focus_loss": false,                           // minimizar siempre pausa (pause + nativeVoxSuspend)
-  "language": 0,                                          // 0 en,1 fr,2 de,3 es,4 it,5 pt,6 ja,7 ko,8 zh,9 ru
-  "input": { }                                            // ver abajo
+  "backend": "d3d11",                     // ANGLE: "d3d11" | "gl" (OpenGL de escritorio) | "vulkan" | "d3d9"; al reiniciar
+  "width": 1280, "height": 720, "fullscreen": false,
+  "internal_width": 1280, "internal_height": 720,   // resolución a la que dibuja el juego (se escala con letterbox)
+  "internal_follows_window": false,                 // true: resolución interna = ventana (GL2JNILib.resize al cambiar)
+  "linear_filter": true, "vsync": true, "fps_limit": 60,   // 0 = sin límite; el juego usa tiempo real
+  "show_fps": false, "menu_bar": false,             // contador de FPS; barra de menú visible al arrancar
+  "pause_on_focus_loss": false,                     // minimizar siempre pausa (pause + nativeVoxSuspend)
+  "volume": 1.0, "video_volume": 1.0, "mute": false,
+  "skip_videos": false, "play_logo": true,          // vídeos de res/raw (logo al arrancar, intro, moviecomplete)
+  "language": 0,                                    // 0 en,1 fr,2 de,3 es,4 it,5 pt,6 ja,7 ko,8 zh,9 ru (al reiniciar)
+  "backups_keep": 20,                               // conjuntos de copias de saves
+  "input": { }                                      // ver abajo; el menú Controles lo escribe completo
 }
 ```
+
+### Menú (F1)
+
+Barra superior estilo Ship of Harkinian: **Zombiewood** (pausar/reanudar, captura, salir), **Gráficos** (backend,
+resolución interna, filtrado, VSync, límite de FPS, pantalla completa, mostrar FPS, saltar vídeos, idioma), **Audio**
+(volumen del juego y de los vídeos, silenciar), **Controles** (remapeo: "Cambiar" y pulsar una tecla o botón del mando,
+"+" añade, "x" borra; zona muerta, ratón), **Carpetas** (abrir saves, copias de seguridad, logs, capturas, datos; crear
+copia ahora) y **Ayuda**. Los cambios se guardan al momento en `zombiewood.json`; backend e idioma piden reiniciar.
+Mientras el menú tiene el ratón o el teclado, esos eventos no llegan al juego.
+
+### Vídeos
+
+`Game.playCinematicAndroid` (intro y "movie complete") y el logo de Gameloft al arrancar se reproducen con Windows Media
+Foundation (H.264/AAC del sistema; en Windows N hace falta el Media Feature Pack, si no, se saltan). Cualquier tecla, clic o
+botón del mando los salta. `"skip_videos": true` los omite siempre.
+
+### Controles
 
 Controles por defecto (el juego solo entiende toques y BACK/MENU: teclado y mando se traducen a toques virtuales
 sobre el HUD, `src/frontend/input.cpp`):
@@ -75,7 +126,7 @@ sobre el HUD, `src/frontend/input.cpp`):
 | Apuntar y disparar | flechas, o mantener clic derecho (dispara hacia el cursor) | stick derecho |
 | Botiquín / arma / pausa / aceptar (`>>`) | `E` · `Q` · `P` · `Espacio` | `Y` · `RB`/`X` · `Start` · `A` |
 | Atrás (BACK) / MENU | `Esc` · `Tab` | `Back`/`B` · `Guide` |
-| Captura PNG / pantalla completa | `F12` · `F11` o `Alt+Enter` | — |
+| Menú del port / captura PNG / pantalla completa | `F1` · `F12` · `F11` o `Alt+Enter` | — |
 
 Objeto `"input"` (se fusiona sobre los valores por defecto; `x`,`y` normalizados 0–1, `radius` en fracción del alto;
 teclas = nombres de `SDL_GetScancodeFromName`, mando = nombres de `SDL_GameController`):
@@ -90,20 +141,28 @@ teclas = nombres de `SDL_GetScancodeFromName`, mando = nombres de `SDL_GameContr
 }
 ```
 
-Opciones de línea de comandos: `--lib=<so>`, `--no-audio`, `--uncapped` (sin vsync ni límite, para medir), `--frames=N`,
-`--shot-every=N`, `--hidden`, `--script=<fichero>` / `--control=<fichero>` (comandos de prueba: `wait`, `tap`,
-`down/move/up`, `key`, `sdlkey`, `pad`, `axis`, `mouse`, `shot`, `pause`, `resume`, `resize`, `quit`; con `--control`
-se ejecutan las líneas que se van añadiendo al fichero), `--load-only <so>` (diagnóstico de carga con la HLE real) y
-`--smoke-test[=N]` (prueba de ventana + ImGui de T2, sin juego). Entorno: `ZW_TRACE_INPUT=1`, `ZW_AUDIO_DUMP=<pcm>`
-y los de CONTRACTS §8.
+### Línea de comandos y pruebas
+
+`--lib=<so>`, `--no-audio`, `--uncapped` (sin vsync ni límite, para medir; no se guarda en el json), `--frames=N`,
+`--shot-every=N`, `--hidden` (ventana oculta; tampoco reproduce el logo), `--install=<apk>`, `--obb=<fichero>`,
+`--install-only`, `--reinstall`, `--script=<fichero>` / `--control=<fichero>` (comandos de prueba: `wait`, `tap`,
+`down/move/up`, `key`, `sdlkey`, `pad`, `axis`, `mouse`, `shot`, `pause`, `resume`, `resize`, `quit` y, de T9,
+`menu [graphics|audio|controls|about|none]`, `wshot <nombre>` (captura de la ventana, con el menú), `remap <destino> [add]`
++ `ui key <tecla>` / `ui pad <botón>` (evento SDL real hacia el menú); con `--control` se ejecutan las líneas que se van
+añadiendo al fichero), `--load-only <so>` (diagnóstico de carga con la HLE real) y `--smoke-test[=N]` (prueba de ventana +
+ImGui de T2, sin juego). Entorno: `ZW_TRACE_INPUT=1`, `ZW_AUDIO_DUMP=<pcm>`, `ZW_LOG_NODEDUP=1`, `ANGLE_DEFAULT_PLATFORM`
+(gana a `backend`) y los de CONTRACTS §8.
 
 - El post-build copia `libEGL.dll`, `libGLESv2.dll` (ANGLE) y `z.dll` junto al exe. El contexto se pide ES 3.0 (el juego
   usa ES 2.0; el frontend necesita `glBlitFramebuffer` para escalar el framebuffer interno).
 
 ## Estructura de targets
 
-`zw_core` (log/config/paths), `zw_loader`, `zw_cpu` (+ `zw_cpu_deps` = dynarmic), `zw_hle_libc`, `zw_hle_gles`,
-`zw_hle_audio`, `zw_jni`, `zw_frontend` (ventana SDL2 + contexto GLES, arranque, hilo GL, input) y el ejecutable `zombiewood`.
+`zw_core` (log/config/paths), `zw_installer` (T9: APK → datos, zlib + BCrypt), `zw_loader`, `zw_cpu` (+ `zw_cpu_deps` =
+dynarmic), `zw_hle_libc`, `zw_hle_gles`, `zw_hle_audio`, `zw_jni`, `zw_frontend` (ventana SDL2 + contexto GLES, arranque,
+hilo GL, input; T9: asistente, menú ImGui, vídeos con Media Foundation, copias de saves) y el ejecutable `zombiewood`.
+`ctest`: 8 pruebas, incluida `installer` (APK sintéticos, no necesita los datos del juego). zlib viene de vcpkg como
+dependencia de `angle` (`find_package(ZLIB)`).
 
 ## Notas
 

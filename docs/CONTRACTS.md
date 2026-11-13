@@ -567,3 +567,24 @@ zw::jni::JavaVM());`.
   Medidas del HUD a 1280×720: sticks en (170,590) y (1108,590), radio ≈ 82 px; son fijos (no flotantes).
 - Medido (win-release, RTX 3060 Laptop, 1280×720): 60 fps con vsync (step 2–9 ms); sin límite ≈ 490–520 fps en menú y
   130–210 fps en partida. El juego usa tiempo real: no depende de 30/60 fijos.
+
+## Frontend (T9) — instalador, config, menú, vídeos, saves, logs
+
+- `installer::Install(src, dest, progress)` (`src/installer/installer.h`): lee el APK en streaming (zlib, sin temporales
+  grandes; los `.part` se renombran al terminar), recorre `assets/archiveObbCache.zip.00N` como un ZIP concatenado por
+  cabeceras locales, o copia OBB sueltos. Escribe `dest/{lib,obb,res/raw,assets}` + `install.json`. SHA-256 de la 1.5.3 en
+  `installer.h` (`kShaZombieWood`, OBB main/patch): si no coinciden es **aviso**, no error. Falta del OBB main = error.
+- `<home>/data` = `game_dir` por defecto y también `vfs.data_dir` (= `/sdcard/.../files`): los nombres `lib/ obb/ res/ assets/`
+  no chocan con los ficheros que escribe el juego.
+- `Settings` (`frontend/settings.h`) es el modelo de `zombiewood.json`; `MergeInto` conserva claves desconocidas.
+  `backend` → `ANGLE_DEFAULT_PLATFORM` antes de crear la ventana (ANGLE lo lee con `GetEnvironmentVariable`).
+- `jni::hooks().play_cinematic` = `video::Play` (Media Foundation) en el hilo GL, **dentro** de `GL2JNILib.step`: pausa el
+  audio de Vox (`audio::set_global_paused`), presenta en el framebuffer 0 y restaura el estado GL que toca; al terminar
+  llama al nativo `GLUtils_SUtils_onVideoFinished` (vacío). `logo_hd.mp4` se reproduce antes del paso 8.
+- Menú ImGui: contexto propio en el hilo GL; los eventos SDL viajan crudos en `Ev::raw` y el menú puede quedárselos
+  (`Menu::ProcessEvent`); los "up" siempre llegan al juego. Se dibuja tras el blit del FBO interno, antes del swap
+  (el backend OpenGL3 de ImGui guarda y restaura el estado GL, incluido `GL_ELEMENT_ARRAY_BUFFER` y los atributos).
+- Saves: `saves::Backup` vigila `<home>/saves` (sondeo cada 2 s + antes de `GL2JNILib.pause` y al salir) y guarda la
+  versión anterior de cada fichero sobrescrito en `<home>/saves_backup/<fecha>/` (no toca la HLE de libc).
+- `log`: rotación (`zombiewood.log` + `.1`…`.4`, y en caliente > 32 MiB) y supresión de repeticiones de Info/Debug
+  (>3 en 30 s → resumen `(xN ...)`); `log::Shutdown()` antes de `_Exit`. `ZW_LOG_NODEDUP=1` lo desactiva.
