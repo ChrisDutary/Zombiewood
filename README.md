@@ -29,7 +29,7 @@ probado y lo no probado: mando físico y escenas 2+ sin probar). Sin conexión: 
 ## Instalación
 
 1. Descarga `Zombiewood-Win64-<versión>.zip` desde la sección **Releases** del repositorio
-   ([última versión](https://github.com/ChrisDutary/2026-1GS242-Dutary-Christian/releases?q=zombiewood)) y descomprímelo
+   ([última versión](https://github.com/ChrisDutary/Zombiewood/releases/latest)) y descomprímelo
    en una carpeta con permiso de escritura (p. ej. `C:\Juegos\Zombiewood`, **no** en `Archivos de programa` ni dentro del
    zip). Contiene `zombiewood.exe`, `SDL2.dll`, `libEGL.dll`, `libGLESv2.dll`, `z.dll`, el runtime de Visual C++
    (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`), `gamecontrollerdb.txt`, `readme.txt` y `licenses/`.

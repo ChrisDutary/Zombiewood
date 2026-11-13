@@ -2,11 +2,17 @@
 
 Todas las mejoras y cambios del port se documentan aquí. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); versiones con [SemVer](https://semver.org/lang/es/).
-Cada versión se publica como release en GitHub con el tag `zombiewood-vX.Y.Z` y su zip
+Cada versión se publica como release en [GitHub](https://github.com/ChrisDutary/Zombiewood/releases) con el tag `vX.Y.Z` y su zip
 `Zombiewood-Win64-X.Y.Z.zip`.
 
 **Actualizar sin perder tu partida:** cierra el juego y copia el contenido del zip nuevo encima de tu carpeta
 (reemplazar archivos). El zip solo trae el programa; `saves/`, `data/` y `zombiewood.json` no se tocan.
+
+## Repositorio
+
+- 2026-11-13: el proyecto se mudó a su propio repositorio público [ChrisDutary/Zombiewood](https://github.com/ChrisDutary/Zombiewood)
+  con todo su historial (antes vivía en la carpeta `Zombiewood/` de un repositorio de la universidad). Las releases
+  0.1.0 y 0.2.0 se volvieron a publicar aquí con los mismos zips; los tags pasan a llamarse `v0.1.0` y `v0.2.0`.
 
 ## [0.2.0] — 2026-11-13
 
