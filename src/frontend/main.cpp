@@ -1,6 +1,10 @@
 #include <GLES2/gl2.h>
 #include <SDL.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -23,6 +27,11 @@
 #include "loader/load_only.h"
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+  // El exe es de consola (CLI --install, ctest, logs en terminal). Si lo abrio el Explorador (doble clic) la consola es
+  // solo nuestra: soltarla para que no aparezca una ventana negra junto al juego. Desde un terminal se conserva.
+  { DWORD pids[2]; if (GetConsoleProcessList(pids, 2) == 1) FreeConsole(); }
+#endif
   zw::log::Init();
 
   // --load-only <ruta .so> [mas .so...]: diagnostico del loader/CPU (T3), sin ventana ni SDL.
