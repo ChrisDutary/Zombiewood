@@ -1,18 +1,20 @@
-# T10 — Empaquetado Win64, README y QA
+# T10 — Win64 packaging, README and QA
 
-Repo en `main`. Lee todo `docs/`.
+> Historical task spec (November 2026). Paths refer to the original development machine.
 
-## Objetivo
-Release reproducible y documentación de usuario.
+Repo on `main`. Read all of `docs/`.
 
-## Requisitos
-- Preset `win-release` → carpeta `Zombiewood-Win64/` (en `C:\Users\chdut\ZombiewoodDev\dist\`) con `zombiewood.exe`, DLLs de ANGLE/SDL, `gamecontrollerdb.txt`, `readme.txt`; zip final. Sin datos del juego.
-- `Zombiewood/README.md` (español): qué es, que **no** incluye el juego (cada usuario aporta su copia), requisitos, instalación, controles por defecto, configuración, problemas comunes, créditos/licencias de terceros (SDL2, ANGLE, dynarmic, ImGui…).
-- Script `tools/package.ps1` que genera el zip desde cero.
-- QA: lista de verificación (arranque limpio, instalar datos, menú, partida 10 min, guardar/cargar, mando, cambio de ventana/fullscreen, alt-tab, audio) con resultados y bugs encontrados en `docs/QA.md`.
+## Goal
+A reproducible release and user documentation.
 
-## Evidencia
-Zip generado (ruta y tamaño), QA.md completo, README.
+## Requirements
+- `win-release` preset → a `Zombiewood-Win64/` folder (in `C:\Users\chdut\ZombiewoodDev\dist\`) with `zombiewood.exe`, the ANGLE/SDL DLLs, `gamecontrollerdb.txt`, `readme.txt`; a final zip. No game data.
+- `Zombiewood/README.md` (in Spanish at the time): what it is, that it does **not** include the game (every user provides their own copy), requirements, installation, default controls, configuration, troubleshooting, third-party credits/licenses (SDL2, ANGLE, dynarmic, ImGui…).
+- A `tools/package.ps1` script that builds the zip from scratch.
+- QA: a checklist (clean start, data install, menu, 10-minute match, save/load, gamepad, windowed/fullscreen switching, alt-tab, audio) with results and any bugs found, in `docs/QA.md`.
 
-## Restricciones
-Commits `zombiewood(T10): ...`, sin push.
+## Proof
+The generated zip (path and size), a complete QA.md, the README.
+
+## Constraints
+Commits `zombiewood(T10): ...`, no push.

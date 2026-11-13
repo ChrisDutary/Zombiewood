@@ -1,27 +1,29 @@
-# T5 — HLE OpenGL ES 2.0 → ANGLE
+# T5 — OpenGL ES 2.0 HLE → ANGLE
 
-Lee `docs/PLAN.md`, `docs/ANALYSIS.md` (sección gráficos), `docs/CONTRACTS.md`, `docs/BUILD.md`. Repo en `main`.
+> Historical task spec (November 2026).
 
-## Objetivo
-Implementar los 99 imports `gl*` de `libGLESv2` (más los `*OES` que consulte el juego vía `eglGetProcAddress`/extensiones si T1 lo indica)
-llamando a ANGLE en el contexto GLES2 que crea el frontend (T2).
+Read `docs/PLAN.md`, `docs/ANALYSIS.md` (graphics section), `docs/CONTRACTS.md`, `docs/BUILD.md`. Repo on `main`.
 
-## Requisitos
-- Traducción de punteros guest→host en todo parámetro puntero (`glBufferData`, `glTexImage2D`, `glShaderSource` — array de punteros guest a strings —, `glGet*v`, `glUniform*v`, `glVertexAttribPointer`).
-- **Client-side vertex arrays**: si `glVertexAttribPointer`/`glDrawElements` reciben punteros (no offsets) con buffer 0 bound, los punteros son direcciones guest: tradúcelos al dibujar (ANGLE soporta client arrays en GLES2; si hay problemas, sube a un VBO temporal).
-- `glGetString`: devuelve strings en memoria guest (cacheadas), con un `GL_EXTENSIONS` que **anuncie solo lo que de verdad soportamos**.
-- Texturas comprimidas (ANALYSIS §7): datos = 1 918 ETC1 (KTX) + 19 PVRTC4; el motor descomprime PVRTC por software si no se
-  anuncia `GL_IMG_texture_compression_pvrtc`. Anuncia solo lo que §7 recomienda (ETC1 si ANGLE lo soporta; si no, decodifica ETC1
-  por software a RGB8). Por seguridad, si llega PVRTC (0x8C00–0x8C03) decodifícalo por software. Además según T1, implementa conversión por software de los formatos que ANGLE no soporte (p. ej. PVRTC/ATC → RGBA8; ETC1 usa la extensión de ANGLE si existe o decodifica). `glCompressedTexImage3DOES`: implementar o degradar según uso real.
-- Shaders GLSL ES 1.00: pasar tal cual a ANGLE; loguea errores de compilación con el código fuente.
-- Seguridad del contexto: todas las llamadas GL deben ocurrir en el hilo que posee el contexto (el hilo de render guest que llama a `step/nativeRender`). Si T1 muestra GL desde otros hilos (`getNumExtraContext`/`setNumExtraContext` sugiere contextos compartidos para carga), implementa contextos compartidos de ANGLE por hilo.
-- Modo debug `ZW_GL_CHECK=1`: `glGetError` tras cada llamada con nombre de función.
+## Goal
+Implement the 99 `gl*` imports from `libGLESv2` (plus any `*OES` functions the game queries via `eglGetProcAddress`/extensions, if T1 says so)
+by calling ANGLE in the GLES2 context created by the frontend (T2).
 
-## Entregables
-`src/hle/gles/`, tests en `tests/hle_gles/` (contexto ANGLE offscreen/pbuffer: subir textura, compilar shader, dibujar un triángulo con client arrays desde memoria guest, leer píxeles).
+## Requirements
+- Guest→host pointer translation for every pointer parameter (`glBufferData`, `glTexImage2D`, `glShaderSource` — an array of guest pointers to strings —, `glGet*v`, `glUniform*v`, `glVertexAttribPointer`).
+- **Client-side vertex arrays**: if `glVertexAttribPointer`/`glDrawElements` receive pointers (not offsets) with buffer 0 bound, those pointers are guest addresses: translate them at draw time (ANGLE supports client arrays in GLES2; if that causes problems, upload to a temporary VBO).
+- `glGetString`: return strings in guest memory (cached), with a `GL_EXTENSIONS` that **advertises only what we really support**.
+- Compressed textures (ANALYSIS §7): the data = 1,918 ETC1 (KTX) + 19 PVRTC4; the engine decompresses PVRTC in software if
+  `GL_IMG_texture_compression_pvrtc` is not advertised. Advertise only what §7 recommends (ETC1 if ANGLE supports it; otherwise decode
+  ETC1 in software to RGB8). To be safe, if PVRTC (0x8C00–0x8C03) arrives, decode it in software. Also, following T1, implement software conversion of any format ANGLE does not support (e.g. PVRTC/ATC → RGBA8; ETC1 uses ANGLE's extension if present, otherwise decode). `glCompressedTexImage3DOES`: implement or degrade according to real usage.
+- GLSL ES 1.00 shaders: pass them to ANGLE unchanged; log compile errors along with the source code.
+- Context safety: every GL call must happen on the thread that owns the context (the guest render thread that calls `step/nativeRender`). If T1 shows GL calls from other threads (`getNumExtraContext`/`setNumExtraContext` hints at shared contexts for loading), implement per-thread ANGLE shared contexts.
+- Debug mode `ZW_GL_CHECK=1`: `glGetError` after each call, with the function name.
 
-## Evidencia
-Tests en verde con salida; lista de los 99 imports con su handler (ninguno sin implementar salvo justificados en el reporte).
+## Deliverables
+`src/hle/gles/`, tests in `tests/hle_gles/` (offscreen/pbuffer ANGLE context: upload a texture, compile a shader, draw a triangle with client arrays from guest memory, read back the pixels).
 
-## Restricciones
-Edita solo `src/hle/gles/`, `tests/hle_gles/` y su CMake. Si necesitas algo del frontend (acceso al contexto/ventana) `ask`. Commits `zombiewood(T5): ...`, sin push.
+## Proof
+Green tests with their output; the list of the 99 imports with their handlers (none left unimplemented unless justified in the report).
+
+## Constraints
+Edit only `src/hle/gles/`, `tests/hle_gles/` and their CMake. If you need something from the frontend (context/window access), `ask`. Commits `zombiewood(T5): ...`, no push.
