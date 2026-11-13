@@ -1,127 +1,127 @@
-# Zombiewood — análisis técnico (T1)
+# Zombiewood — technical analysis (T1)
 
-Especificación para T3–T8: qué hay que emular de Android debajo de `libZombieWood.so`.
+Specification for T3–T8: what has to be emulated from Android underneath `libZombieWood.so`.
 
-- Binario: `lib/armeabi-v7a/libZombieWood.so`, 13 500 416 bytes, MD5 `73a6dc0f00e1690dc3122019054f89e1`, `DT_SONAME = libAndroid.so.full`.
+- Binary: `lib/armeabi-v7a/libZombieWood.so`, 13,500,416 bytes, MD5 `73a6dc0f00e1690dc3122019054f89e1`, `DT_SONAME = libAndroid.so.full`.
 - APK: `com.gameloft.android.ANMP.GloftZOHM` 1.5.3 (versionCode 15325, minSdk 14, targetSdk 19).
-- Motor: **Glitch** (fork de Irrlicht de Gameloft) + **glf** (capa de plataforma) + **Vox** (audio) + **gameswf** (UI Flash) + Lua,
-  FreeType, libpng, libjpeg, zlib, curl, OpenSSL, TinyXML, JsonCpp, todo enlazado estáticamente (incluido libstdc++/gnustl y el unwinder).
-- Las direcciones de este documento son **direcciones virtuales del ELF** (base 0). En Ghidra la base por defecto es `0x10000` (sumar).
-- Convención: **[C]** = confirmado en el binario/dex; **[I]** = inferido (coherente con la evidencia, sin verificar el camino completo);
-  **[NC]** = no confirmado. Todo lo que no lleva marca es [C].
-- Cómo se obtuvo: `tools/analysis/*.py` (pyelftools + capstone) sobre el `.so`, Ghidra 12.1.4 headless (`tools/analysis/ghidra/DecompileList.java`)
-  y JADX 1.5 (API de `jadx-headless-mcp`) sobre el APK. Nada del juego se ha copiado al repo.
+- Engine: **Glitch** (Gameloft's Irrlicht fork) + **glf** (platform layer) + **Vox** (audio) + **gameswf** (Flash UI) + Lua,
+  FreeType, libpng, libjpeg, zlib, curl, OpenSSL, TinyXML, JsonCpp, all statically linked (including libstdc++/gnustl and the unwinder).
+- Addresses in this document are **ELF virtual addresses** (base 0). In Ghidra the default base is `0x10000` (add it).
+- Convention: **[C]** = confirmed in the binary/dex; **[I]** = inferred (consistent with the evidence, full path not verified);
+  **[NC]** = not confirmed. Anything without a mark is [C].
+- How it was obtained: `tools/analysis/*.py` (pyelftools + capstone) on the `.so`, Ghidra 12.1.4 headless (`tools/analysis/ghidra/DecompileList.java`)
+  and JADX 1.5 (the `jadx-headless-mcp` API) on the APK. Nothing from the game has been copied into the repo.
 
 ---
 
 ## 1. ABI
 
-| Propiedad | Valor | Evidencia |
+| Property | Value | Evidence |
 |---|---|---|
-| Clase/endianness | ELF32 LE, `ET_DYN`, `EM_ARM`, `e_flags = 0x05000000` (EABI v5, **sin** `EF_ARM_ABI_FLOAT_HARD/SOFT`) | cabecera |
+| Class/endianness | ELF32 LE, `ET_DYN`, `EM_ARM`, `e_flags = 0x05000000` (EABI v5, **without** `EF_ARM_ABI_FLOAT_HARD/SOFT`) | header |
 | CPU | ARMv7-A (`Tag_CPU_arch = 10`, `Tag_CPU_arch_profile = 'A'`, `Tag_CPU_name = "ARM v7"`) | `.ARM.attributes` |
-| Conjuntos | `Tag_ARM_ISA_use = 1`, `Tag_THUMB_ISA_use = 2` → **Thumb-2** | `.ARM.attributes` |
-| FP | `Tag_FP_arch = 4` → **VFPv3-D16**; no hay `Tag_Advanced_SIMD_arch` → **sin NEON** | `.ARM.attributes` |
-| Paso de FP | **softfp**: `Tag_ABI_VFP_args` **ausente** (= AAPCS base). `Tag_ABI_HardFP_use = 3` (SP+DP) | `.ARM.attributes` |
-| `wchar_t` | 4 bytes (`Tag_ABI_PCS_wchar_t = 4`); enums de 32 bits (`Tag_ABI_enum_size = 2`) | `.ARM.attributes` |
-| Alineación | `Tag_ABI_align_needed/preserved = 1` → pila alineada a 8 en llamadas públicas | `.ARM.attributes` |
-| División hardware | `Tag_DIV_use = 1` (no usada); las divisiones van por `__aeabi_*div*` internos | `.ARM.attributes` |
+| Instruction sets | `Tag_ARM_ISA_use = 1`, `Tag_THUMB_ISA_use = 2` → **Thumb-2** | `.ARM.attributes` |
+| FP | `Tag_FP_arch = 4` → **VFPv3-D16**; no `Tag_Advanced_SIMD_arch` → **no NEON** | `.ARM.attributes` |
+| FP argument passing | **softfp**: `Tag_ABI_VFP_args` **absent** (= base AAPCS). `Tag_ABI_HardFP_use = 3` (SP+DP) | `.ARM.attributes` |
+| `wchar_t` | 4 bytes (`Tag_ABI_PCS_wchar_t = 4`); 32-bit enums (`Tag_ABI_enum_size = 2`) | `.ARM.attributes` |
+| Alignment | `Tag_ABI_align_needed/preserved = 1` → stack 8-aligned at public calls | `.ARM.attributes` |
+| Hardware division | `Tag_DIV_use = 1` (unused); divisions go through internal `__aeabi_*div*` | `.ARM.attributes` |
 
-Confirmación de softfp en código: `VoxSetDataThreshold(double)` empieza con `vmov d6, r0, r1`; `glf::AndroidAddTouchEvent` convierte enteros
-y pasa los `float` en `r3`/pila; `Java_…_GameRenderer_nativeInit` lee el 4.º argumento de `r3` y el 5.º de la pila.
-**Regla para los thunks de imports (T3/T4/T5):** `float` en un registro núcleo/slot de pila de 4 bytes; `double`/`long long` en par
-`r0:r1` o `r2:r3` (par alineado: si toca `r1` se salta a `r2:r3`) o en pila alineada a 8; retorno `float` en `r0`, `double`/`int64` en `r0:r1`.
+softfp confirmed in code: `VoxSetDataThreshold(double)` starts with `vmov d6, r0, r1`; `glf::AndroidAddTouchEvent` converts integers
+and passes the `float`s in `r3`/the stack; `Java_…_GameRenderer_nativeInit` reads the 4th argument from `r3` and the 5th from the stack.
+**Rule for import thunks (T3/T4/T5):** `float` in a core register/4-byte stack slot; `double`/`long long` in the pair
+`r0:r1` or `r2:r3` (aligned pair: if `r1` is next it skips to `r2:r3`) or on the 8-aligned stack; `float` returns in `r0`, `double`/`int64` in `r0:r1`.
 
-Uso real de instrucciones (`insn_stats.py`, 26 999 funciones con símbolo):
+Actual instruction usage (`insn_stats.py`, 26,999 functions with symbols):
 
-- **26 857 funciones Thumb-2 (6.16 MB) y 142 ARM (21 KB)**. Las ARM son el runtime de C++/unwinder (`__cxa_*`, `__dynamic_cast`, `__gnu_Unwind_*`,
-  type_info) y los helpers `__aeabi_*`. La **PLT es ARM** (stubs de 12 bytes) → todas las llamadas a imports desde Thumb son `BLX` (interworking obligatorio).
-- **Veneers del linker** al final de `.text` (≈`0xb0be60`–`0xb0c078`): `bx pc; nop` (Thumb) + `ldr ip,[pc]; add pc,ip,pc; .word off` (ARM). Los usan los
-  *tail calls* Thumb→PLT (p. ej. `glShaderSource`, `memcpy`, `free`…). El JIT debe soportar `bx pc` en Thumb y `add pc, ip, pc` en ARM.
-- VFP: ~80 000 instrucciones (`vldr/vstr/vmov/vmul/vmla/vmls/vnmls/vnmul/vadd/vsub/vdiv/vsqrt/vabs/vneg/vcvt/vcmp/vcmpe/vmrs/vpush/vpop/vldm/vstm`,
-  muchas condicionales dentro de bloques IT). Solo `d0–d15`.
-- NEON: **no se usa** [I]. El barrido cuenta ~2 700 mnemónicos NEON pero caen en *literal pools* decodificados como código (el build no declara
-  Advanced SIMD). Aun así dynarmic los soporta; no hace falta trabajo extra.
-- **`ldrex/strex` + barreras (`dmb`)**: ~33 000 instrucciones reales — contadores de referencias atómicos (`boost::intrusive_ptr`, `IReferenceCounted`,
-  COW de `std::string`). Con varios hilos guest **hace falta monitor exclusivo compartido** (ver §10).
-- ARMv6T2+: `movw/movt`, `ubfx/sbfx/bfi/bfc`, `uxtb/uxth/sxtb/sxth`, `rev/rev16`, `clz`, `mls`, `umull/smull/umlal`, `tbb/tbh`, bloques `IT` (~24 000).
-- `svc`, `bkpt`, `udf`, `mrc/mcr`, `sdiv/udiv`: solo aparecen en datos decodificados; **no hay syscalls directas**.
+- **26,857 Thumb-2 functions (6.16 MB) and 142 ARM (21 KB)**. The ARM ones are the C++ runtime/unwinder (`__cxa_*`, `__dynamic_cast`, `__gnu_Unwind_*`,
+  type_info) and the `__aeabi_*` helpers. **The PLT is ARM** (12-byte stubs) → every import call from Thumb is a `BLX` (interworking required).
+- **Linker veneers** at the end of `.text` (≈`0xb0be60`–`0xb0c078`): `bx pc; nop` (Thumb) + `ldr ip,[pc]; add pc,ip,pc; .word off` (ARM). They are used by
+  Thumb→PLT *tail calls* (e.g. `glShaderSource`, `memcpy`, `free`…). The JIT must support `bx pc` in Thumb and `add pc, ip, pc` in ARM.
+- VFP: ~80,000 instructions (`vldr/vstr/vmov/vmul/vmla/vmls/vnmls/vnmul/vadd/vsub/vdiv/vsqrt/vabs/vneg/vcvt/vcmp/vcmpe/vmrs/vpush/vpop/vldm/vstm`,
+  many conditional inside IT blocks). Only `d0–d15`.
+- NEON: **not used** [I]. The sweep counts ~2,700 NEON mnemonics but they fall in *literal pools* decoded as code (the build does not declare
+  Advanced SIMD). dynarmic supports them anyway; no extra work needed.
+- **`ldrex/strex` + barriers (`dmb`)**: ~33,000 real instructions — atomic reference counters (`boost::intrusive_ptr`, `IReferenceCounted`,
+  `std::string` COW). With several guest threads **a shared exclusive monitor is required** (see §10).
+- ARMv6T2+: `movw/movt`, `ubfx/sbfx/bfi/bfc`, `uxtb/uxth/sxtb/sxth`, `rev/rev16`, `clz`, `mls`, `umull/smull/umlal`, `tbb/tbh`, `IT` blocks (~24,000).
+- `svc`, `bkpt`, `udf`, `mrc/mcr`, `sdiv/udiv`: only appear in data decoded as code; **there are no direct syscalls**.
 
-TLS / protección de pila / arranque:
+TLS / stack protection / startup:
 
-- **No hay `PT_TLS` ni lecturas de `TPIDRURO`** (0 coincidencias de `mrc p15,0,rX,c13,c0,3` en ARM y Thumb). Todo el estado por hilo va por
-  `pthread_key_create/getspecific/setspecific` (79 llamadas a `pthread_getspecific`). No hace falta emular el registro TLS.
-- `__stack_chk_guard` se importa como dato (`R_ARM_GLOB_DAT`, 1 122 llamadas a `__stack_chk_fail`): el código hace `ldr rX,[GOT]; ldr rX,[rX]`.
-  Basta un `uint32_t` en memoria guest con un valor constante.
-- `PT_GNU_STACK` RW (pila no ejecutable), `PT_GNU_RELRO` (`0xc84370`, 334 992 bytes; se puede ignorar), `DT_SYMBOLIC`, `DT_FLAGS = 0x0a`
-  (`SYMBOLIC|BIND_NOW`), `DT_FLAGS_1 = NOW` → resolver **todos** los `JUMP_SLOT` en la carga (sin lazy binding; `PLT0` no se usa).
-- **Orden de arranque del loader** (lo que hace `dlopen` de bionic): mapear → relocar → ejecutar `.init_array` (**552 punteros**, `0xc91828`, todos a
-  `.text`, la mayoría Thumb con bit 0) en orden → `JNI_OnLoad(vm, NULL)`. No hay `DT_INIT` ni `.preinit_array`. `.fini_array` tiene 1 entrada (`0xab7160`,
-  `__do_global_dtors_aux` → `__cxa_finalize`); no ejecutarla. Los constructores estáticos llaman a imports (`__cxa_atexit`, `malloc`,
-  `pthread_mutex_init`, `__cxa_guard_*`…): **toda la HLE de libc debe estar lista antes de `.init_array`**.
-- Excepciones C++: el unwinder ARM EHABI está dentro del `.so` y pide la tabla con el import **`__gnu_Unwind_Find_exidx(pc, &count)`**: devolver
-  `base + 0xb1c678` y `count = 0x2f6a0 / 8 = 24 276` (sección `.ARM.exidx`, `PT_ARM_EXIDX`). El estado EH por hilo usa `pthread_key` (`__cxa_get_globals`).
+- **There is no `PT_TLS` and no `TPIDRURO` reads** (0 matches for `mrc p15,0,rX,c13,c0,3` in ARM and Thumb). All per-thread state goes through
+  `pthread_key_create/getspecific/setspecific` (79 calls to `pthread_getspecific`). There is no need to emulate the TLS register.
+- `__stack_chk_guard` is imported as data (`R_ARM_GLOB_DAT`, 1,122 calls to `__stack_chk_fail`): the code does `ldr rX,[GOT]; ldr rX,[rX]`.
+  A `uint32_t` in guest memory with a constant value is enough.
+- `PT_GNU_STACK` RW (non-executable stack), `PT_GNU_RELRO` (`0xc84370`, 334,992 bytes; can be ignored), `DT_SYMBOLIC`, `DT_FLAGS = 0x0a`
+  (`SYMBOLIC|BIND_NOW`), `DT_FLAGS_1 = NOW` → resolve **every** `JUMP_SLOT` at load time (no lazy binding; `PLT0` is unused).
+- **Loader startup order** (what bionic's `dlopen` does): map → relocate → run `.init_array` (**552 pointers**, `0xc91828`, all into
+  `.text`, mostly Thumb with bit 0) in order → `JNI_OnLoad(vm, NULL)`. There is no `DT_INIT` or `.preinit_array`. `.fini_array` has 1 entry (`0xab7160`,
+  `__do_global_dtors_aux` → `__cxa_finalize`); do not run it. Static constructors call imports (`__cxa_atexit`, `malloc`,
+  `pthread_mutex_init`, `__cxa_guard_*`…): **the whole libc HLE must be ready before `.init_array`**.
+- C++ exceptions: the ARM EHABI unwinder lives inside the `.so` and asks for the table through the import **`__gnu_Unwind_Find_exidx(pc, &count)`**: return
+  `base + 0xb1c678` and `count = 0x2f6a0 / 8 = 24,276` (`.ARM.exidx` section, `PT_ARM_EXIDX`). Per-thread EH state uses `pthread_key` (`__cxa_get_globals`).
 
-Segmentos: `PT_LOAD` R+X `0x0–0xc82d5c` (fichero = memoria), `PT_LOAD` RW vaddr `0xc84370` (offset fichero `0xc83370`, filesz `0x5c7a0`, memsz `0xab4c4`;
-`.bss` = `0xce0b10`+`0x4ed24`). Reservar ≥ `0xd30000` contiguos. Exporta 35 581 símbolos (sin strip) — T3 puede resolver por nombre cualquier función interna.
+Segments: `PT_LOAD` R+X `0x0–0xc82d5c` (file = memory), `PT_LOAD` RW vaddr `0xc84370` (file offset `0xc83370`, filesz `0x5c7a0`, memsz `0xab4c4`;
+`.bss` = `0xce0b10`+`0x4ed24`). Reserve ≥ `0xd30000` contiguous bytes. Exports 35,581 symbols (not stripped) — T3 can resolve any internal function by name.
 
 ---
 
-## 2. Relocaciones
+## 2. Relocations
 
-Solo `SHT_REL` (addend implícito en el destino). `elf_abi.py`:
+Only `SHT_REL` (implicit addend at the target). `elf_abi.py`:
 
-| Sección | Tipo | Nº | Tratamiento |
+| Section | Type | Count | Handling |
 |---|---|---|---|
-| `.rel.dyn` | `R_ARM_RELATIVE` (23) | 56 376 (= `DT_RELCOUNT`, van primero) | `*p += base` |
-| `.rel.dyn` | `R_ARM_ABS32` (2) | 6 467, **todas contra símbolos indefinidos** | `*p += S` (addend in situ, normalmente 0) |
-| `.rel.dyn` | `R_ARM_GLOB_DAT` (21) | 18, todas contra indefinidos | `*p = S` |
-| `.rel.plt` | `R_ARM_JUMP_SLOT` (22) | 356 | `*p = S` (resolver en carga) |
+| `.rel.dyn` | `R_ARM_RELATIVE` (23) | 56,376 (= `DT_RELCOUNT`, they come first) | `*p += base` |
+| `.rel.dyn` | `R_ARM_ABS32` (2) | 6,467, **all against undefined symbols** | `*p += S` (in-place addend, normally 0) |
+| `.rel.dyn` | `R_ARM_GLOB_DAT` (21) | 18, all against undefined symbols | `*p = S` |
+| `.rel.plt` | `R_ARM_JUMP_SLOT` (22) | 356 | `*p = S` (resolve at load time) |
 
-No hay `TLS_*`, `COPY`, `IRELATIVE`, `REL32` ni relocaciones de texto. Por `DT_SYMBOLIC`, ninguna relocación apunta a símbolos definidos en el propio `.so`.
+There are no `TLS_*`, `COPY`, `IRELATIVE`, `REL32` or text relocations. Because of `DT_SYMBOLIC`, no relocation targets symbols defined in the `.so` itself.
 
-Detalle de las relocaciones contra imports (importa para cómo se materializa cada import en memoria guest):
+Details of the relocations against imports (this matters for how each import materializes in guest memory):
 
-- `R_ARM_ABS32`: `__cxa_pure_virtual` ×6 457 (vtables), `malloc` ×3, `free` ×3, `realloc` ×2, `calloc` ×1, `strdup` ×1 (tablas de allocators de
-  zlib/curl/OpenSSL). → **cada función importada necesita una dirección guest invocable** (un thunk), no basta con interceptar la PLT.
-- `R_ARM_GLOB_DAT`: datos `__sF`, `__stack_chk_guard`, `_ctype_`, `_tolower_tab_`, `_toupper_tab_`, `SL_IID_ENGINE`, `SL_IID_BUFFERQUEUE`, `SL_IID_PLAY`;
-  y punteros a función `malloc`, `free`, `calloc`, `realloc`, `strdup`, `strcmp`, `fread`, `fwrite`, `fputc`, `__gnu_Unwind_Find_exidx`.
-- 364 imports = 356 funciones con `JUMP_SLOT` + 8 objetos de datos.
+- `R_ARM_ABS32`: `__cxa_pure_virtual` ×6,457 (vtables), `malloc` ×3, `free` ×3, `realloc` ×2, `calloc` ×1, `strdup` ×1 (allocator tables of
+  zlib/curl/OpenSSL). → **every imported function needs a callable guest address** (a thunk); intercepting the PLT is not enough.
+- `R_ARM_GLOB_DAT`: the data `__sF`, `__stack_chk_guard`, `_ctype_`, `_tolower_tab_`, `_toupper_tab_`, `SL_IID_ENGINE`, `SL_IID_BUFFERQUEUE`, `SL_IID_PLAY`;
+  and function pointers `malloc`, `free`, `calloc`, `realloc`, `strdup`, `strcmp`, `fread`, `fwrite`, `fputc`, `__gnu_Unwind_Find_exidx`.
+- 364 imports = 356 functions with `JUMP_SLOT` + 8 data objects.
 
 ---
 
 ## 3. Imports
 
-Lista completa y legible por máquina en [`imports.json`](imports.json) (364 entradas: `name, lib, category, kind, signature, used, calls, data_relocs,
-stub_ok, note`). `used` sale de `import_xrefs.py` (BL/BLX directos al stub PLT + veneers + relocaciones de datos): **los 364 tienen al menos una
-referencia**; `stub_ok = true` marca los que pueden devolver un valor fijo/fallo sin afectar al juego.
+The complete machine-readable list is in [`imports.json`](imports.json) (364 entries: `name, lib, category, kind, signature, used, calls, data_relocs,
+stub_ok, note`). `used` comes from `import_xrefs.py` (direct BL/BLX to the PLT stub + veneers + data relocations): **all 364 have at least one
+reference**; `stub_ok = true` marks those that can return a fixed value/failure without affecting the game.
 
-Resumen por categoría (nº de símbolos · observaciones para T4):
+Summary by category (number of symbols · notes for T4):
 
-| Categoría | Nº | Notas |
+| Category | Count | Notes |
 |---|---|---|
 | `data` (libc) | 5 | `__sF`, `__stack_chk_guard`, `_ctype_`, `_tolower_tab_`, `_toupper_tab_` |
-| `libc-runtime` | 22 | `__assert2` (5 588 sitios), `__cxa_atexit`, `__errno`, `__gnu_Unwind_Find_exidx`, `abort/exit`, `setjmp/longjmp`, `qsort`, `lrand48/srand48`, uid/pid, señales (solo OpenSSL) |
-| `libc-memory` | 9 | `malloc/free/calloc/realloc` + `mem*` (`memcpy` 3 531 sitios) |
+| `libc-runtime` | 22 | `__assert2` (5,588 sites), `__cxa_atexit`, `__errno`, `__gnu_Unwind_Find_exidx`, `abort/exit`, `setjmp/longjmp`, `qsort`, `lrand48/srand48`, uid/pid, signals (OpenSSL only) |
+| `libc-memory` | 9 | `malloc/free/calloc/realloc` + `mem*` (`memcpy` 3,531 sites) |
 | `libc-string` | 39 | `str*`, `ato*`, `strto*`, `is*`, `tolower/toupper`, `setlocale` |
-| `libc-wchar` | 22 | `wchar_t` de 32 bits; `wcslen` 190 sitios, `wmemcpy` 278 (glitch `stringw`, gameswf) |
-| `libc-stdio` | 37 | `FILE*` reales (ver abajo); `sprintf` 1 051, `sscanf` 58, `snprintf` 158 |
+| `libc-wchar` | 22 | 32-bit `wchar_t`; `wcslen` 190 sites, `wmemcpy` 278 (glitch `stringw`, gameswf) |
+| `libc-stdio` | 37 | real `FILE*`s (see below); `sprintf` 1,051, `sscanf` 58, `snprintf` 158 |
 | `libc-fs` | 20 | `stat/fstat`, `opendir/readdir`, `mkdir`, `unlink`, `pread`, `fsync`… |
 | `libc-time` | 15 | `gettimeofday`, `clock`, `clock_gettime`, `time`, `localtime`, `usleep`, `sleep` |
-| `libc-pthread` | 29 | ver §10 |
-| `libc-net` | 23 | todos `stub_ok` (ver §11) |
-| `libm` | 34 | variantes `float` y `double`, softfp |
-| `libstdc++` | 4 | `__cxa_guard_acquire/release/abort`, `__cxa_pure_virtual`. **No** importa `operator new/delete` (gnustl estático → `malloc`) |
+| `libc-pthread` | 29 | see §10 |
+| `libc-net` | 23 | all `stub_ok` (see §11) |
+| `libm` | 34 | `float` and `double` variants, softfp |
+| `libstdc++` | 4 | `__cxa_guard_acquire/release/abort`, `__cxa_pure_virtual`. Does **not** import `operator new/delete` (static gnustl → `malloc`) |
 | `liblog` | 2 | `__android_log_print/vprint` |
-| `opensles` | 4 | `slCreateEngine` + 3 IID (camino muerto por defecto, §8) |
-| `gles2` | 99 | ver §7 |
+| `opensles` | 4 | `slCreateEngine` + 3 IIDs (a dead path by default, §8) |
+| `gles2` | 99 | see §7 |
 
-No se importa nada de `libdl` (aunque es `DT_NEEDED`), ni `libandroid`, ni `libEGL`, ni `libz` (zlib interno), ni `dlopen/dlsym`, `mmap`, `sem_*`,
+Nothing is imported from `libdl` (even though it is `DT_NEEDED`), nor `libandroid`, `libEGL`, `libz` (internal zlib), `dlopen/dlsym`, `mmap`, `sem_*`,
 `pthread_exit/detach/kill`, `nanosleep`, `statfs`, `fileno`, `ferror`, `getc_unlocked`.
 
-### Layouts bionic de 32 bits que el guest toca directamente
+### 32-bit bionic layouts the guest touches directly
 
-**`FILE` (84 bytes) y `__sF`** — el código usa macros inline de `<stdio.h>`, así que el `FILE*` devuelto por `fopen` debe ser una estructura real en memoria guest:
+**`FILE` (84 bytes) and `__sF`** — the code uses the inline macros from `<stdio.h>`, so the `FILE*` returned by `fopen` must be a real structure in guest memory:
 
 ```c
 struct __sbuf { unsigned char *_base; int _size; };
@@ -138,11 +138,11 @@ struct FILE {                       /* sizeof = 84 */
 extern FILE __sF[3];                /* stdin = &__sF[0], stdout = +84, stderr = +168 */
 ```
 
-- `_file` (**offset 14**): `glf::FileStreamImpl::Impl::ReadWithOffset` hace `pread(*(short*)(fp+14), buf, n, off)` y `Close` hace `fsync(*(short*)(fp+14))`
-  (macro `fileno`). Es el camino de **lectura asíncrona/posicionada del sistema de archivos del motor**: `_file` debe contener un fd que `pread` entienda.
-- `_flags` (**offset 12**): `ferror`/`feof` inline leen `__SERR = 0x40` / `__SEOF = 0x20` (Lua `liolib`, libpng). Mantener esos bits (al menos a 0 / EOF correcto).
-- `_p/_r/_w`: no hay evidencia de `getc/putc` inline (se importan como funciones) [I]; dejarlos a 0 es seguro (`_r = 0`, `_w = 0` fuerzan el camino lento).
-- `stdout/stderr` se pasan como `&__sF[1]`, `&__sF[2]` a `fprintf/fwrite/fputs/fflush`.
+- `_file` (**offset 14**): `glf::FileStreamImpl::Impl::ReadWithOffset` does `pread(*(short*)(fp+14), buf, n, off)` and `Close` does `fsync(*(short*)(fp+14))`
+  (the `fileno` macro). This is the engine file system's **asynchronous/positioned read path**: `_file` must hold an fd that `pread` understands.
+- `_flags` (**offset 12**): inline `ferror`/`feof` read `__SERR = 0x40` / `__SEOF = 0x20` (Lua `liolib`, libpng). Keep those bits (at least 0 / correct EOF).
+- `_p/_r/_w`: no evidence of inline `getc/putc` (they are imported as functions) [I]; leaving them at 0 is safe (`_r = 0`, `_w = 0` force the slow path).
+- `stdout/stderr` are passed as `&__sF[1]`, `&__sF[2]` to `fprintf/fwrite/fputs/fflush`.
 
 **`struct stat` (104 bytes, ARM EABI)**: `st_dev` u64 @0, pad @8, `__st_ino` u32 @12, `st_mode` u32 @16, `st_nlink` u32 @20, `st_uid` @24, `st_gid` @28,
 `st_rdev` u64 @32, pad @40, `st_size` **s64 @48**, `st_blksize` u32 @56, `st_blocks` u64 @64, `st_atime` @72 (+nsec @76), `st_mtime` @80, `st_ctime` @88,
@@ -150,519 +150,520 @@ extern FILE __sF[3];                /* stdin = &__sF[0], stdout = +84, stderr = 
 
 **`struct dirent`**: `d_ino` u64 @0, `d_off` s64 @8, `d_reclen` u16 @16, `d_type` u8 @18 (`DT_DIR = 4`, `DT_REG = 8`), `d_name[256]` @19.
 
-**`_ctype_`**: `const char *_ctype_` apunta a una tabla de 257 bytes; se indexa `(_ctype_ + 1)[c]`. Bits: `_U 0x01, _L 0x02, _N 0x04, _S 0x08, _P 0x10,
-_C 0x20, _X 0x40, _B 0x80`. `_tolower_tab_` / `_toupper_tab_`: `const short *` a tablas de 257 `short`, `(tab + 1)[c]`. Ojo: los tres símbolos son
-**punteros** (el GOT apunta a la variable puntero, que apunta a la tabla).
+**`_ctype_`**: `const char *_ctype_` points to a 257-byte table; indexed as `(_ctype_ + 1)[c]`. Bits: `_U 0x01, _L 0x02, _N 0x04, _S 0x08, _P 0x10,
+_C 0x20, _X 0x40, _B 0x80`. `_tolower_tab_` / `_toupper_tab_`: `const short *` to tables of 257 `short`s, `(tab + 1)[c]`. Careful: all three symbols are
+**pointers** (the GOT points to the pointer variable, which points to the table).
 
-**`errno`**: `int *__errno(void)`; un `int` por hilo guest. Valores Linux (`ENOENT 2, EINTR 4, EAGAIN 11, EACCES 13, EEXIST 17, EINVAL 22, ETIMEDOUT 110`…).
+**`errno`**: `int *__errno(void)`; one `int` per guest thread. Linux values (`ENOENT 2, EINTR 4, EAGAIN 11, EACCES 13, EEXIST 17, EINVAL 22, ETIMEDOUT 110`…).
 
-**`jmp_buf`**: `long[64]` (256 bytes). `setjmp/longjmp` (13/27 sitios: libpng, libjpeg, Lua, FreeType, GLU tess) deben implementarse **sobre el estado del
-CPU guest** (r4–r11, sp, lr, d8–d15, fpscr), no con `setjmp` del host.
+**`jmp_buf`**: `long[64]` (256 bytes). `setjmp/longjmp` (13/27 sites: libpng, libjpeg, Lua, FreeType, GLU tess) must be implemented **on top of the guest
+CPU state** (r4–r11, sp, lr, d8–d15, fpscr), not with the host's `setjmp`.
 
 **pthread (bionic 4.x)**: `pthread_t = long`; `pthread_mutex_t = { int volatile value; }` (**4 bytes**); `pthread_cond_t = { int volatile value; }` (4 bytes);
-`pthread_attr_t` 24 bytes; `pthread_key_t = int`; `pthread_once_t = int`; `pthread_mutexattr_t = long`. Los objetos host no caben inline → tabla lateral
-indexada por dirección guest (con creación perezosa para mutex estáticos a 0; inicializadores bionic: normal `0`, recursivo `0x4000`, errorcheck `0x8000`).
+`pthread_attr_t` 24 bytes; `pthread_key_t = int`; `pthread_once_t = int`; `pthread_mutexattr_t = long`. Host objects do not fit inline → a side table
+indexed by guest address (with lazy creation for zero-initialized static mutexes; bionic initializers: normal `0`, recursive `0x4000`, errorcheck `0x8000`).
 
-**tiempo**: `time_t`/`clock_t`/`off_t` de 32 bits; `timeval`/`timespec` 8 bytes; `struct tm` 44 bytes (9 `int` + `long tm_gmtoff` + `const char *tm_zone`);
-`CLOCKS_PER_SEC = 1 000 000`.
+**time**: 32-bit `time_t`/`clock_t`/`off_t`; 8-byte `timeval`/`timespec`; 44-byte `struct tm` (9 `int`s + `long tm_gmtoff` + `const char *tm_zone`);
+`CLOCKS_PER_SEC = 1,000,000`.
 
-**varargs**: `va_list` en ARM EABI es `struct { void *__ap; }` (una palabra, se pasa por valor). `printf`-family: `double`/`long long` alineados a 8 en la
-zona de argumentos. `sscanf` necesita implementación completa (`%f %d %x %s %c %[...] %n`, anchuras).
+**varargs**: on ARM EABI `va_list` is `struct { void *__ap; }` (one word, passed by value). `printf` family: `double`/`long long` 8-aligned in the
+argument area. `sscanf` needs a complete implementation (`%f %d %x %s %c %[...] %n`, widths).
 
-Callbacks guest que la HLE debe poder invocar: comparador de `qsort` (13 sitios), `pthread_create` start routine, destructores de `pthread_key_create`,
-`pthread_once`, y —si se guarda— `__cxa_atexit`.
+Guest callbacks the HLE must be able to call: the `qsort` comparator (13 sites), the `pthread_create` start routine, `pthread_key_create` destructors,
+`pthread_once`, and —if kept— `__cxa_atexit`.
 
-`lrand48/srand48` (47/5 sitios): RNG de jugabilidad; implementar el LCG de 48 bits exacto (`X = X·0x5DEECE66D + 0xB`, `srand48` fija `X = seed<<16 | 0x330E`).
+`lrand48/srand48` (47/5 sites): the gameplay RNG; implement the exact 48-bit LCG (`X = X·0x5DEECE66D + 0xB`, `srand48` sets `X = seed<<16 | 0x330E`).
 
-`sysconf`: 1 sitio, `GetNumberOfCores()` → `sysconf(0x61 /*_SC_NPROCESSORS_ONLN*/)`; alimenta el perfil gráfico (`GetProfileGPU`).
+`sysconf`: 1 site, `GetNumberOfCores()` → `sysconf(0x61 /*_SC_NPROCESSORS_ONLN*/)`; feeds the graphics profile (`GetProfileGPU`).
 
 ---
 
-## 4. Secuencia de arranque (lado Java → nativo)
+## 4. Startup sequence (Java side → native)
 
-Extraída de `classes.dex` (`Game`, `GL2JNILib`, `GL2JNIView`, `GLSurfaceView` propio, clases `as`/`at`/`av`, `GameRenderer`). El APK es un *repack*:
-el launcher real es `com.dataManager.MainActivity` (extrae `assets/game.apk` y `assets/archiveObbCache.zip.00N`), que acaba lanzando `…GloftZOHM.Game`.
+Extracted from `classes.dex` (`Game`, `GL2JNILib`, `GL2JNIView`, the custom `GLSurfaceView`, classes `as`/`at`/`av`, `GameRenderer`). The APK is a *repack*:
+the real launcher is `com.dataManager.MainActivity` (it extracts `assets/game.apk` and `assets/archiveObbCache.zip.00N`), which ends up launching `…GloftZOHM.Game`.
 
-Hilos Java: **UI** (main looper) y **GL** (el `GLThread` del `GLSurfaceView`, único hilo que hace GL y que llama a `step`).
+Java threads: **UI** (main looper) and **GL** (the `GLSurfaceView`'s `GLThread`, the only thread that does GL and calls `step`).
 
-| # | Hilo | Llamada | Argumentos / efecto nativo |
+| # | Thread | Call | Arguments / native effect |
 |---|---|---|---|
-| 0 | UI | `System.loadLibrary("ZombieWood")` → `.init_array` → **`JNI_OnLoad(vm, 0)`** | `VoxSetJavaVM(vm)`; `mJavaVM = vm`; `vm->GetEnv(&env, 0x10004)` (si ≠ 0 devuelve −1); `AndroidOS_JNIOnload(vm)`: guarda `AndroidOS_JavaVM`, `AndroidOS_GetEnv()`, **`AndroidOS::Init()`** (FindClass de `…/GLUtils/SUtils`, `…/GLUtils/Device`, `…/installer/GameInstaller` y sus métodos — si falla llama `exit`), `InAppBilling_setJavaVM`, `SplashScreen_setJavaVM`, `AdServer_setJavaVM`, `GameUtils_setJavaVM`. Devuelve `0x10004` |
-| 1 | UI | `Game.onCreate`: `PortingJNI.Init`, `Tracking.init` (solo Java) | — |
-| 2 | UI | `Game.onStart`: **`Game.nativeSetGPUInfo(GraphicChooser.b)`** | cadena `GL_RENDERER` obtenida antes por la activity `GraphicChooser`; se guarda en `GetPhoneGPUNamePointer()` |
-| 3 | UI | (activity `GameInstaller`: DRM + extracción de OBB; llama `GameInstaller.initNative`, `GDRMPolicy.*`, `nativeStart`…) | **Solo instalador; no hace falta para jugar** (§11). Termina con `setResult(1)` |
-| 4 | UI | `Game.onActivityResult(100, 1)` → **`GL2JNILib.init()`** | `env->GetJavaVM`; `NewGlobalRef(clase GL2JNILib)`; cachea IDs estáticos `getResource`, `setupPaths`, `createView`, `setViewSettings`, `setCurrentContext`, `enableAccelerometer`; `glf::AndroidInit()` → llama a Java **`GL2JNILib.createView()`** |
-| 4a | UI | (dentro de `createView`) `new GL2JNIView` → `new at()` → **`GameRenderer.nativeInit(Game.getManufacture(), displayW, displayH, Game.O)`** | `s_windowWidth = displayW`, `s_windowHeight = displayH` (tamaño de pantalla en píxeles). `manufacture`: 0 genérico, 1 Motorola, 2 Samsung, 3 HTC, 4 Sony, 5 Sharp… (usar **0**). `Game.O` = versionName `"1.5.3"` (no se usa en nativo) |
-| 5 | UI | **`Game.nativeInit()`** | `NewGlobalRef(clase Game)`; cachea ~60 IDs estáticos de `Game` (tabla §5.1) y **llama inmediatamente** a `GetPhoneManufacturer/Model/Firmware/Device/CPUName/CPUFreq/GPUName`, `getSDFolder`, `getSaveFolder`, `GetIMEI`, `GetWSClose`, copiando las cadenas a globales (`GetSDFolderPathPointer()`, `GetSaveFolderPathPointer()`…) |
-| 6 | UI | `InAppBilling.init(F)` → `InAppBilling.nativeInit…` | opcional (IAP) |
-| 7 | UI | `Game.onResume` (1.ª vez): `PlatformAndroid.nativeInit()`, `FacebookAndroidGLSocialLib.nativeInit()`, `GameAPIAndroidGLSocialLib.nativeInit()` | cachean clase + IDs sociales (tabla §5.3). Opcionales |
-| 8 | **GL** | `ConfigChooser`: **`GL2JNILib.initGL()`** | función vacía |
-| 9 | GL | **`GL2JNILib.getViewSettings()`** | `m_gAppPath = sdFolder + "/"`; `glf::AndroidGetViewSettings()`: si no hay app → crea `glf::Globals`, **`NewApp(0, argv)`** (`new Application`, 0x11f88 bytes), `App::MyInit()` → `ThreadMgr::Init`, `Application::Init(CreationSettings&)`; después llama a Java **`GL2JNILib.setViewSettings(pixelSize, zBuffer, stencil, csaa, flag)`** |
-| 10 | GL | `eglCreateContext` (cliente **GLES 2**) → **`GL2JNILib.getNumExtraContext()`** | devuelve `CreationSettings+0x3c` = **0** (valor por defecto; nadie lo cambia) → Java no crea contextos pbuffer extra |
-| 11 | GL | `onSurfaceCreated` → **`GL2JNILib.stateChanged(true)`** | envía `CoreEvent{type 0x65, 5}` (5 = contexto creado; `false` → 4) |
-| 12 | GL | `Game.GetPhoneInfo()` → `nativeSetPhoneModel(Build.MODEL)`, `nativeSetIMEI(id)`, **`nativeSetGPUInfo(glGetString(GL_RENDERER))`**, `nativeSetCPUInfo(maxFreqKHz float)` | además Java calcula `GetTextureFormat()` a partir de `GL_EXTENSIONS` (1 PVRTC, 2 ATC, 3 DXT, 4 ETC1) |
-| 13 | GL | `onSurfaceChanged(w,h)` → `glViewport(0,0,w,h)` (Java) + **`GL2JNILib.resize(w, h)`** | `glf::AndroidResizeScreen`: guarda tamaño en `AppImpl`, marca el hilo como principal |
-| 14 | GL | cada frame: **`GL2JNILib.step()`** (si no está en pausa) y después `eglSwapBuffers` | `glf::AndroidUpdate()` → `gApp->vtbl[0x24]()` (= `App::Update` → `Application::Update`). En la **primera** `Application::Update` se ejecuta `Application::SetupDevice()` (crea el dispositivo Glitch/driver GLES2, monta los OBB, `Application::Init(device)`, `ExtractInitFiles`, `GLOTManager::InitManager`, `PostInit`). El *swap* lo hace Java, no el nativo |
-| 15 | UI | foco/pausa: `GL2JNILib.pause()` / `resume()`, `Game.nativeVoxSuspend()` / `nativeVoxResume()` | `appPause/appResume`; `resume` vuelve a consultar `isWifiEnabled` |
+| 0 | UI | `System.loadLibrary("ZombieWood")` → `.init_array` → **`JNI_OnLoad(vm, 0)`** | `VoxSetJavaVM(vm)`; `mJavaVM = vm`; `vm->GetEnv(&env, 0x10004)` (if ≠ 0 returns −1); `AndroidOS_JNIOnload(vm)`: stores `AndroidOS_JavaVM`, `AndroidOS_GetEnv()`, **`AndroidOS::Init()`** (FindClass of `…/GLUtils/SUtils`, `…/GLUtils/Device`, `…/installer/GameInstaller` and their methods — on failure it calls `exit`), `InAppBilling_setJavaVM`, `SplashScreen_setJavaVM`, `AdServer_setJavaVM`, `GameUtils_setJavaVM`. Returns `0x10004` |
+| 1 | UI | `Game.onCreate`: `PortingJNI.Init`, `Tracking.init` (Java only) | — |
+| 2 | UI | `Game.onStart`: **`Game.nativeSetGPUInfo(GraphicChooser.b)`** | the `GL_RENDERER` string obtained earlier by the `GraphicChooser` activity; stored in `GetPhoneGPUNamePointer()` |
+| 3 | UI | (the `GameInstaller` activity: DRM + OBB extraction; calls `GameInstaller.initNative`, `GDRMPolicy.*`, `nativeStart`…) | **Installer only; not needed to play** (§11). Ends with `setResult(1)` |
+| 4 | UI | `Game.onActivityResult(100, 1)` → **`GL2JNILib.init()`** | `env->GetJavaVM`; `NewGlobalRef(GL2JNILib class)`; caches the static IDs `getResource`, `setupPaths`, `createView`, `setViewSettings`, `setCurrentContext`, `enableAccelerometer`; `glf::AndroidInit()` → calls Java **`GL2JNILib.createView()`** |
+| 4a | UI | (inside `createView`) `new GL2JNIView` → `new at()` → **`GameRenderer.nativeInit(Game.getManufacture(), displayW, displayH, Game.O)`** | `s_windowWidth = displayW`, `s_windowHeight = displayH` (screen size in pixels). `manufacture`: 0 generic, 1 Motorola, 2 Samsung, 3 HTC, 4 Sony, 5 Sharp… (use **0**). `Game.O` = versionName `"1.5.3"` (unused natively) |
+| 5 | UI | **`Game.nativeInit()`** | `NewGlobalRef(Game class)`; caches ~60 static `Game` IDs (table §5.1) and **immediately calls** `GetPhoneManufacturer/Model/Firmware/Device/CPUName/CPUFreq/GPUName`, `getSDFolder`, `getSaveFolder`, `GetIMEI`, `GetWSClose`, copying the strings into globals (`GetSDFolderPathPointer()`, `GetSaveFolderPathPointer()`…) |
+| 6 | UI | `InAppBilling.init(F)` → `InAppBilling.nativeInit…` | optional (IAP) |
+| 7 | UI | `Game.onResume` (1st time): `PlatformAndroid.nativeInit()`, `FacebookAndroidGLSocialLib.nativeInit()`, `GameAPIAndroidGLSocialLib.nativeInit()` | cache the class + social IDs (table §5.3). Optional |
+| 8 | **GL** | `ConfigChooser`: **`GL2JNILib.initGL()`** | empty function |
+| 9 | GL | **`GL2JNILib.getViewSettings()`** | `m_gAppPath = sdFolder + "/"`; `glf::AndroidGetViewSettings()`: if there is no app → creates `glf::Globals`, **`NewApp(0, argv)`** (`new Application`, 0x11f88 bytes), `App::MyInit()` → `ThreadMgr::Init`, `Application::Init(CreationSettings&)`; then calls Java **`GL2JNILib.setViewSettings(pixelSize, zBuffer, stencil, csaa, flag)`** |
+| 10 | GL | `eglCreateContext` (**GLES 2** client) → **`GL2JNILib.getNumExtraContext()`** | returns `CreationSettings+0x3c` = **0** (the default; nobody changes it) → Java creates no extra pbuffer contexts |
+| 11 | GL | `onSurfaceCreated` → **`GL2JNILib.stateChanged(true)`** | sends `CoreEvent{type 0x65, 5}` (5 = context created; `false` → 4) |
+| 12 | GL | `Game.GetPhoneInfo()` → `nativeSetPhoneModel(Build.MODEL)`, `nativeSetIMEI(id)`, **`nativeSetGPUInfo(glGetString(GL_RENDERER))`**, `nativeSetCPUInfo(maxFreqKHz float)` | Java also computes `GetTextureFormat()` from `GL_EXTENSIONS` (1 PVRTC, 2 ATC, 3 DXT, 4 ETC1) |
+| 13 | GL | `onSurfaceChanged(w,h)` → `glViewport(0,0,w,h)` (Java) + **`GL2JNILib.resize(w, h)`** | `glf::AndroidResizeScreen`: stores the size in `AppImpl`, marks the thread as the main one |
+| 14 | GL | every frame: **`GL2JNILib.step()`** (unless paused) and then `eglSwapBuffers` | `glf::AndroidUpdate()` → `gApp->vtbl[0x24]()` (= `App::Update` → `Application::Update`). The **first** `Application::Update` runs `Application::SetupDevice()` (creates the Glitch device/GLES2 driver, mounts the OBBs, `Application::Init(device)`, `ExtractInitFiles`, `GLOTManager::InitManager`, `PostInit`). Java does the *swap*, not the native code |
+| 15 | UI | focus/pause: `GL2JNILib.pause()` / `resume()`, `Game.nativeVoxSuspend()` / `nativeVoxResume()` | `appPause/appResume`; `resume` queries `isWifiEnabled` again |
 
-Notas:
+Notes:
 
-- `GL2JNILib.setPaths(String,String,String)` existe pero **Java no lo llama** y el nativo está vacío. Las rutas llegan por `getSDFolder/getSaveFolder/GetObbPath`.
-- `Application::Init(CreationSettings&)` (paso 9) fija: ancho/alto = `s_windowWidth/Height` del paso 4a, `[0x2c] = 16` y `[0x2d] = 16`, `[0x28] = 2`,
-  `[0x44] = 1`, y `[0x13] = 1` solo si el nombre de GPU en minúsculas contiene una de: `adreno`, `powervr sgx`, `nvidia ap`, `nvidia tegra`,
-  `mali-400 mp`… (lista en `0xb4c088`). Con eso `setViewSettings` recibe `(16, 16, 8 o 0, 4, x)`: RGB565, depth ≥16 (Java intenta 24 y cae a 16), stencil 8 si
-  la GPU está en la lista. **Antes** llama a `CheckDiskSpace()`; si devuelve 0, `MyInit` falla ("MyInit failed") [NC: no se ha analizado qué consulta; no hay `statfs` importado].
-- `GameRenderer.nativeRender/nativeResize/nativeDestroy` y `GameGLSurfaceView.*` son del camino antiguo (no usado por `Game`); `nativeRender` = `appUpdate`.
-- Orden mínimo recomendado para el port (T7/T8): 0 → 2 → 4 (+4a) → 5 → [7] → 9 → 11 → 12 → 13 → bucle 14. `nativeSetGPUInfo` **debe** preceder a 9.
+- `GL2JNILib.setPaths(String,String,String)` exists but **Java never calls it** and the native one is empty. Paths arrive through `getSDFolder/getSaveFolder/GetObbPath`.
+- `Application::Init(CreationSettings&)` (step 9) sets: width/height = `s_windowWidth/Height` from step 4a, `[0x2c] = 16` and `[0x2d] = 16`, `[0x28] = 2`,
+  `[0x44] = 1`, and `[0x13] = 1` only if the lowercase GPU name contains one of: `adreno`, `powervr sgx`, `nvidia ap`, `nvidia tegra`,
+  `mali-400 mp`… (list at `0xb4c088`). With that, `setViewSettings` receives `(16, 16, 8 or 0, 4, x)`: RGB565, depth ≥16 (Java tries 24 and falls back to 16), stencil 8 if
+  the GPU is in the list. **Before that** it calls `CheckDiskSpace()`; if it returns 0, `MyInit` fails ("MyInit failed") [NC: what it queries has not been analyzed; no `statfs` is imported].
+- `GameRenderer.nativeRender/nativeResize/nativeDestroy` and `GameGLSurfaceView.*` belong to the old path (not used by `Game`); `nativeRender` = `appUpdate`.
+- Recommended minimal order for the port (T7/T8): 0 → 2 → 4 (+4a) → 5 → [7] → 9 → 11 → 12 → 13 → loop 14. `nativeSetGPUInfo` **must** come before 9.
 
 ---
 
-## 5. Llamadas nativo → Java
+## 5. Native → Java calls
 
-Patrón de uso de JNI en el `.so`:
+How the `.so` uses JNI:
 
-- Obtención de `JNIEnv`: `AndroidOS_GetEnv()` (pthread key propia; si no hay env → `vm->AttachCurrentThread(&env, 0)`), `NVThreadGetCurrentJNIEnv()`
-  (`AttachCurrentThread` + `GetEnv(…, 0x10004)`), y bloques `GetEnv(&env, 0x10002/0x10004/0x10006)`; si devuelve `-2 (JNI_EDETACHED)` hacen
-  `AttachCurrentThread` … `DetachCurrentThread`. **Stub recomendado: `GetEnv` y `AttachCurrentThread` devuelven siempre 0 y un `JNIEnv*` válido para el
-  hilo que llama; `DetachCurrentThread` = 0.** Slots de `JavaVM` usados: `AttachCurrentThread` (+0x10), `DetachCurrentThread` (+0x14), `GetEnv` (+0x18).
-- Las clases propias se resuelven con `FindClass("com/gameloft/android/ANMP/GloftZOHM" + "/Sufijo")` (se construye con `sprintf`/`memcpy`, a veces desde
-  `"com.gameloft.android.ANMP.GloftZOHM"` reemplazando `.`→`/`) o usando el `jclass` que llega como 2.º argumento del `Java_*_nativeInit` → `NewGlobalRef`.
-- **Casi todo es estático**: `GetStaticMethodID` + `CallStatic<T>Method`. El `.so` usa tanto los slots variádicos (`CallStaticIntMethod` +0x204,
-  `CallStaticVoidMethod` +0x234, `CallStaticObjectMethod` +0x1c8…) como los **`…V` con `va_list`** (los wrappers inline `_JNIEnv::CallStaticVoidMethod(...)`
-  exportados hacen `push {r2,r3}` y llaman al slot `V`, p. ej. +0x238). T7 debe implementar ambas familias leyendo argumentos de `r2/r3`+pila o del
-  `va_list` guest (`float` promocionado a `double`, `jlong`/`jdouble` alineados a 8).
-- Slots de `JNIEnv` vistos: `FindClass`, `GetObjectClass`, `NewGlobalRef`, `DeleteGlobalRef`, `DeleteLocalRef`, `PushLocalFrame`, `PopLocalFrame`,
+- Getting a `JNIEnv`: `AndroidOS_GetEnv()` (its own pthread key; if there is no env → `vm->AttachCurrentThread(&env, 0)`), `NVThreadGetCurrentJNIEnv()`
+  (`AttachCurrentThread` + `GetEnv(…, 0x10004)`), and `GetEnv(&env, 0x10002/0x10004/0x10006)` blocks; if it returns `-2 (JNI_EDETACHED)` they do
+  `AttachCurrentThread` … `DetachCurrentThread`. **Recommended stub: `GetEnv` and `AttachCurrentThread` always return 0 and a valid `JNIEnv*` for the
+  calling thread; `DetachCurrentThread` = 0.** `JavaVM` slots used: `AttachCurrentThread` (+0x10), `DetachCurrentThread` (+0x14), `GetEnv` (+0x18).
+- The game's own classes are resolved with `FindClass("com/gameloft/android/ANMP/GloftZOHM" + "/Suffix")` (built with `sprintf`/`memcpy`, sometimes from
+  `"com.gameloft.android.ANMP.GloftZOHM"` replacing `.`→`/`) or by using the `jclass` that arrives as the 2nd argument of `Java_*_nativeInit` → `NewGlobalRef`.
+- **Almost everything is static**: `GetStaticMethodID` + `CallStatic<T>Method`. The `.so` uses both the variadic slots (`CallStaticIntMethod` +0x204,
+  `CallStaticVoidMethod` +0x234, `CallStaticObjectMethod` +0x1c8…) and the **`…V` ones with a `va_list`** (the exported inline wrappers `_JNIEnv::CallStaticVoidMethod(...)`
+  do `push {r2,r3}` and call the `V` slot, e.g. +0x238). T7 must implement both families, reading arguments from `r2/r3`+stack or from the
+  guest `va_list` (`float` promoted to `double`, `jlong`/`jdouble` 8-aligned).
+- `JNIEnv` slots seen: `FindClass`, `GetObjectClass`, `NewGlobalRef`, `DeleteGlobalRef`, `DeleteLocalRef`, `PushLocalFrame`, `PopLocalFrame`,
   `GetMethodID`, `GetStaticMethodID`, `GetFieldID`*, `GetStaticFieldID`, `GetStaticObjectField`, `GetStaticIntField`*, `NewObject`, `Call<T>Method(V)`,
   `CallNonvirtual<Void|Int|Object|Boolean>Method(V)`, `CallStatic<Void|Int|Long|Float|Boolean|Object>Method(V)`, `NewStringUTF`, `GetStringUTFChars`,
   `ReleaseStringUTFChars`, `GetStringUTFLength`*, `GetArrayLength`, `NewByteArray`, `GetByteArrayElements/Release…`, `GetByteArrayRegion`*,
   `SetByteArrayRegion`*, `GetIntArrayElements/Release…`, `GetObjectArrayElement`, `GetPrimitiveArrayCritical/Release…`, `GetJavaVM`,
-  `ExceptionCheck/Clear`*, `RegisterNatives` **no** (todo son exports `Java_*`). (* = [I], visto por offset sin seguir el flujo completo; implementar la tabla completa de JNI 1.6 es barato y evita sorpresas.)
-- **Un stub debe tolerar `jclass`/`jmethodID` nulos** (si T7 decide no llamar a algún `nativeInit`, el nativo llamará con IDs a 0): devolver 0/NULL.
+  `ExceptionCheck/Clear`*; **not** `RegisterNatives` (everything is a `Java_*` export). (* = [I], seen by offset without following the full flow; implementing the complete JNI 1.6 table is cheap and avoids surprises.)
+- **A stub must tolerate null `jclass`/`jmethodID`** (if T7 decides not to call some `nativeInit`, the native code will call with 0 IDs): return 0/NULL.
 
-Leyenda de "stub": valor que debe devolver la clase Java falsa.
+"Stub" legend: the value the fake Java class should return.
 
-### 5.1 `com/gameloft/android/ANMP/GloftZOHM/Game` (IDs cacheados en `Game.nativeInit`; todos `static`)
+### 5.1 `com/gameloft/android/ANMP/GloftZOHM/Game` (IDs cached in `Game.nativeInit`; all `static`)
 
-| Método | Firma JNI | Qué hace en Android | Stub |
+| Method | JNI signature | What it does on Android | Stub |
 |---|---|---|---|
-| `getSDFolder` | `()Ljava/lang/String;` | carpeta de datos (pref. `SDFolder`), por defecto `/sdcard/android/data/<pkg>/files` | ruta guest de datos, **sin** `/` final |
-| `getSaveFolder` | `()Ljava/lang/String;` | por defecto `/data/data/<pkg>` | ruta guest de saves, sin `/` final |
-| `GetObbPath` | `()Ljava/lang/String;` | `<ext>/Android/obb/<pkg>/` | ruta guest **con `/` final** (el nativo hace `strcat(path, nombre)`) |
-| `GetMainObbName` | `()Ljava/lang/String;` | constante | `"main.1501.com.gameloft.android.ANMP.GloftZOHM.obb"` |
-| `GetPatchObbName` | `()Ljava/lang/String;` | constante | `"patch.15325.com.gameloft.android.ANMP.GloftZOHM.obb"` (o `""` si no existe: el nativo lo omite) |
+| `getSDFolder` | `()Ljava/lang/String;` | data folder (pref. `SDFolder`), by default `/sdcard/android/data/<pkg>/files` | guest data path, **without** a trailing `/` |
+| `getSaveFolder` | `()Ljava/lang/String;` | by default `/data/data/<pkg>` | guest saves path, without a trailing `/` |
+| `GetObbPath` | `()Ljava/lang/String;` | `<ext>/Android/obb/<pkg>/` | guest path **with a trailing `/`** (the native code does `strcat(path, name)`) |
+| `GetMainObbName` | `()Ljava/lang/String;` | constant | `"main.1501.com.gameloft.android.ANMP.GloftZOHM.obb"` |
+| `GetPatchObbName` | `()Ljava/lang/String;` | constant | `"patch.15325.com.gameloft.android.ANMP.GloftZOHM.obb"` (or `""` if it does not exist: the native code skips it) |
 | `GetExtraObbName` | `()Ljava/lang/String;` | pref. `extraFile` | `""` |
-| `GetPhoneManufacturer` / `GetPhoneModel` / `GetPhoneDevice` / `GetPhoneFirmware` | `()Ljava/lang/String;` | `Build.*` | `"samsung"`, `"GT-I9500"`, `"ja3g"`, `"4.4.2"` (cualquiera; evitar modelos de la lista Xperia/`droid2`) |
-| `GetPhoneCPUName` | `()Ljava/lang/String;` | línea `Processor` de `/proc/cpuinfo` | `"ARMv7 Processor rev 3 (v7l)"` |
-| `GetPhoneCPUFreq` | `()F` | kHz máx. | `1900000.0f` |
-| `GetPhoneGPUName` | `()Ljava/lang/String;` | `GL_RENDERER` | igual que lo pasado a `nativeSetGPUInfo` (p. ej. `"Adreno (TM) 330"`, ver §7) |
-| `GetIMEI` | `()Ljava/lang/String;` | deviceId/serial | cadena fija, p. ej. `"000000000000000"` |
-| `GetWSClose` | `()Z` | flag de welcome screen | `false` |
-| `getNumberOfCPUCores` | `()I` | nº de núcleos | 4 |
-| `getManufacture` | `()I` | código de fabricante | 0 |
+| `GetPhoneManufacturer` / `GetPhoneModel` / `GetPhoneDevice` / `GetPhoneFirmware` | `()Ljava/lang/String;` | `Build.*` | `"samsung"`, `"GT-I9500"`, `"ja3g"`, `"4.4.2"` (anything; avoid models in the Xperia/`droid2` list) |
+| `GetPhoneCPUName` | `()Ljava/lang/String;` | the `Processor` line of `/proc/cpuinfo` | `"ARMv7 Processor rev 3 (v7l)"` |
+| `GetPhoneCPUFreq` | `()F` | max kHz | `1900000.0f` |
+| `GetPhoneGPUName` | `()Ljava/lang/String;` | `GL_RENDERER` | the same as passed to `nativeSetGPUInfo` (e.g. `"Adreno (TM) 330"`, see §7) |
+| `GetIMEI` | `()Ljava/lang/String;` | deviceId/serial | a fixed string, e.g. `"000000000000000"` |
+| `GetWSClose` | `()Z` | welcome screen flag | `false` |
+| `getNumberOfCPUCores` | `()I` | number of cores | 4 |
+| `getManufacture` | `()I` | manufacturer code | 0 |
 | `GetTextureFormat` | `()I` | 1 PVRTC / 2 ATC / 3 DXT / 4 ETC1 | **4** |
-| `GetPhoneLanguage` | `()I` | 0 en,1 fr,2 de,3 es,4 it,5 pt/br,6 ja,7 ko,8 zh,9 ru | según config (0 por defecto) |
+| `GetPhoneLanguage` | `()I` | 0 en,1 fr,2 de,3 es,4 it,5 pt/br,6 ja,7 ko,8 zh,9 ru | per config (0 by default) |
 | `GetPhoneLanguageS` / `GetCurrentLocale` | `()Ljava/lang/String;` | `Locale` | `"English (United States)"` / `"en_US"` |
-| `GetCurrentTime` | `()J` | `System.currentTimeMillis()` | reloj real en ms |
-| `isWifiEnabled` | `()I` | 1 si hay wifi | **0** (→ `ZombiesGame::SetInternet(false)`) |
-| `IsJailBroken` | `()I` | existe `Superuser.apk` | 0 |
-| `GetXperiaSlideout` | `()I` | 2 = no es Xperia Play | 2 |
-| `keepScreenOn` | `(Z)Z` | wake lock | devuelve el argumento |
-| `hasClosedActivity` | `()I` | flag GLLive | 0 |
-| `checkFreeCashReady` | `()Z` | anuncios | `false` |
-| `getRewardsAvailable` / `getRewardsUser` / `getInstalledGames` / `getGLLivePassword` / `getGLLiveUsername` | `()Ljava/lang/String;` | servicios Gameloft | `""` |
-| `Exit` | `()V` | mata el proceso | cerrar la app host |
-| `sendAppToBackground` / `Pause` | `()V` | ir a HOME | minimizar o no-op |
-| `openBrowser` | `(Ljava/lang/String;)V` | `ACTION_VIEW` | no-op (o abrir URL en el host) |
-| `playCinematicAndroid` | `(Ljava/lang/String;)V` | lanza `MyVideoView` con `res/raw/intro_hd.mp4` o `moviecomplete_hd.mp4` | no-op (ver §8) |
-| `getHttpResponse` | `(Ljava/lang/String;)V` | GET en un hilo Java | no-op |
-| `HideScreen` / `ShowScreen` | `(I)V` | oculta/muestra los layouts Android de logo/carga (0/1/2) | no-op (`HideScreen` se llama desde `SetupDevice` y menús) |
-| `PrintDebug`, `ShowPlusOne` | `(Ljava/lang/String;)V` | vacío | no-op |
+| `GetCurrentTime` | `()J` | `System.currentTimeMillis()` | real clock in ms |
+| `isWifiEnabled` | `()I` | 1 if there is wifi | **0** (→ `ZombiesGame::SetInternet(false)`) |
+| `IsJailBroken` | `()I` | `Superuser.apk` exists | 0 |
+| `GetXperiaSlideout` | `()I` | 2 = not an Xperia Play | 2 |
+| `keepScreenOn` | `(Z)Z` | wake lock | returns the argument |
+| `hasClosedActivity` | `()I` | GLLive flag | 0 |
+| `checkFreeCashReady` | `()Z` | ads | `false` |
+| `getRewardsAvailable` / `getRewardsUser` / `getInstalledGames` / `getGLLivePassword` / `getGLLiveUsername` | `()Ljava/lang/String;` | Gameloft services | `""` |
+| `Exit` | `()V` | kills the process | close the host app |
+| `sendAppToBackground` / `Pause` | `()V` | go HOME | minimize or no-op |
+| `openBrowser` | `(Ljava/lang/String;)V` | `ACTION_VIEW` | no-op (or open the URL on the host) |
+| `playCinematicAndroid` | `(Ljava/lang/String;)V` | launches `MyVideoView` with `res/raw/intro_hd.mp4` or `moviecomplete_hd.mp4` | no-op (see §8) |
+| `getHttpResponse` | `(Ljava/lang/String;)V` | GET on a Java thread | no-op |
+| `HideScreen` / `ShowScreen` | `(I)V` | hides/shows the Android logo/loading layouts (0/1/2) | no-op (`HideScreen` is called from `SetupDevice` and menus) |
+| `PrintDebug`, `ShowPlusOne` | `(Ljava/lang/String;)V` | empty | no-op |
 | `PopupTrophyGL`, `notifyTrophy`, `launchIGP`, `downloadWelcomeScr`, `showAds`, `loadFreeCash` | `(I)V` | GLLive/ads | no-op |
 | `launchGLLive` | `(IZ)V` | GLLive | no-op |
 | `enableLaunchPN` | `(Z)V` | push | no-op |
-| `logoutGLLive`, `displayWelcomeBackUser`, `launchWelcomeScr`, `setIsPayingUser`, `hideAds`, `showInterstitial`, `showFreeCash` | `()V` | varios | no-op |
+| `logoutGLLive`, `displayWelcomeBackUser`, `launchWelcomeScr`, `setIsPayingUser`, `hideAds`, `showInterstitial`, `showFreeCash` | `()V` | various | no-op |
 
-### 5.2 Clases de plataforma del juego
+### 5.2 The game's platform classes
 
-| Clase (prefijo `…/GloftZOHM`) | Dónde se resuelve | Métodos estáticos (firma) → stub |
+| Class (prefix `…/GloftZOHM`) | Where it is resolved | Static methods (signature) → stub |
 |---|---|---|
-| `GL2JNILib` | `GL2JNILib.init` (jclass arg) | `createView()V` → **dispara 4a** (crear vista/ventana y llamar `GameRenderer.nativeInit`); `setViewSettings(IIIII)V` → guardar (pixelSize, depth, stencil, csaa, flag) para elegir config EGL; `setCurrentContext(I)Z` → `eglMakeCurrent` del contexto *i* (−1 = soltar); devolver `true` para 0/−1 (con 0 contextos extra no se pide otro); `setupPaths()V` vacío; `enableAccelerometer(ZF)V` vacío; `getResource(Ljava/lang/String;)[B` → `null` (sin llamadores) |
-| `/GLUtils/SUtils` | `AndroidOS::Init` (FindClass) y `SUtils.nativeInit` (jclass) | `getPreferenceString(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;` → `""` (clave `SDFolder` de `GamePrefs`: `""` ⇒ el nativo usa `/sdcard/android/data/<pkg>/files`); `getPackage()Ljava/lang/String;` → `"com.gameloft.android.ANMP.GloftZOHM"`; `getSaveFolder()`/`getSDFolder()` → como en `Game`; `getContext()Landroid/content/Context;` → objeto opaco no nulo; `playVideo(Ljava/lang/String;Z)Z` → `false`; `stopVideo()V`, `inGameVideoSetSkipEnabled(Z)V`, `shareInfo(…3×String)V`, `showCantGoBackPopup(I)V`, `deleteFile(Ljava/lang/String;)V` → no-op (deleteFile: borrar el fichero); `getAssetAsString(Ljava/lang/String;)[B` → contenido del asset o `null`; `getGameName()`, `getInjectedIGP()`, `getInjectedSerialKey()`, `getMetaDataValue(String)` → `""`; `retrieveBarrels()[I` → `int[0]`; `getGLUID(Ljava/lang/String;)[I` → 4 enteros fijos; `initCheckConnectionType()I` → 0; `nativeSetPreference(Landroid/os/Bundle;)V` / `nativeGetPreference(Landroid/os/Bundle;)Landroid/os/Bundle;` → almacén clave/valor persistente (**preferencias del juego**; campos de bundle `npDataType, npKey, npPrefName, npData, npDefaultValue, npResult`); `genericUnzipArchive(String,String)Z` → `false`; `removeDirectoryRecursively(String)Z` → `true` |
-| `/GLUtils/Device` | `AndroidOS::Init`, `Device.nativeInit` | `getUserAgent()` → UA fijo; `d1`, `getAndroidId`, `getSerial`, `getSerialNo`, `getDeviceFirmware`, `getMacAddress`, `getDeviceIMEI`, `getHDIDFV`, `getHDIDFVVersion`, `getGLDID`, `getDeviceName`, `getPhoneManufacturer`, `getPhoneModel`, `retrieveDeviceCarrier`, `retrieveDeviceCountry`, `retrieveDeviceRegion`, `retrieveDeviceLanguage`, `retrieveCPUSerial`, `getPhoneDevice`, `getPhoneProduct` — todos `()Ljava/lang/String;` → cadenas fijas no nulas (`"en"`, `"US"`, `"00:00:00:00:00:00"`…) |
-| `/GLUtils/ResLoader` | `AResLoader_Init` (FindClass) | `getLength(Ljava/lang/String;)I` → tamaño del asset del APK o −1; `getBytes(Ljava/lang/String;)[B`; `getAssetList(Ljava/lang/String;)[Ljava/lang/String;` → lector de `assets/` (solo hay `colors.conf` y `families.list`, que también están en el OBB). Devolver −1/`null` [I] |
-| `/installer/GameInstaller` | `AndroidOS::Init` (FindClass), `initNative` | campos estáticos `mPreferencesName` (`Ljava/lang/String;` = `"GamePrefs"`), `m_sInstance`, `mDeviceInfo` (`Landroid/telephony/TelephonyManager;`); métodos `startGame()V`, `getSDFolder()Ljava/lang/String;`. Solo `mPreferencesName` se lee al jugar (`AndroidOS::GetSDFolder`) |
-| `/SendInfo` | `SendInfo.initMethods` | `getSDFolder()`, `getGLDID()`, `getPhoneCarrier()`, `getLocaleCountry()`, `getLocaleLanguage()`, `getManufacturerModel()` → String; `getGLUID()[I`. Tracking; opcional |
+| `GL2JNILib` | `GL2JNILib.init` (jclass arg) | `createView()V` → **triggers 4a** (create the view/window and call `GameRenderer.nativeInit`); `setViewSettings(IIIII)V` → store (pixelSize, depth, stencil, csaa, flag) to choose the EGL config; `setCurrentContext(I)Z` → `eglMakeCurrent` of context *i* (−1 = release); return `true` for 0/−1 (with 0 extra contexts no other one is requested); `setupPaths()V` empty; `enableAccelerometer(ZF)V` empty; `getResource(Ljava/lang/String;)[B` → `null` (no callers) |
+| `/GLUtils/SUtils` | `AndroidOS::Init` (FindClass) and `SUtils.nativeInit` (jclass) | `getPreferenceString(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;` → `""` (key `SDFolder` of `GamePrefs`: `""` ⇒ the native code uses `/sdcard/android/data/<pkg>/files`); `getPackage()Ljava/lang/String;` → `"com.gameloft.android.ANMP.GloftZOHM"`; `getSaveFolder()`/`getSDFolder()` → as in `Game`; `getContext()Landroid/content/Context;` → an opaque non-null object; `playVideo(Ljava/lang/String;Z)Z` → `false`; `stopVideo()V`, `inGameVideoSetSkipEnabled(Z)V`, `shareInfo(…3×String)V`, `showCantGoBackPopup(I)V`, `deleteFile(Ljava/lang/String;)V` → no-op (deleteFile: delete the file); `getAssetAsString(Ljava/lang/String;)[B` → the asset's contents or `null`; `getGameName()`, `getInjectedIGP()`, `getInjectedSerialKey()`, `getMetaDataValue(String)` → `""`; `retrieveBarrels()[I` → `int[0]`; `getGLUID(Ljava/lang/String;)[I` → 4 fixed integers; `initCheckConnectionType()I` → 0; `nativeSetPreference(Landroid/os/Bundle;)V` / `nativeGetPreference(Landroid/os/Bundle;)Landroid/os/Bundle;` → a persistent key/value store (**the game's preferences**; bundle fields `npDataType, npKey, npPrefName, npData, npDefaultValue, npResult`); `genericUnzipArchive(String,String)Z` → `false`; `removeDirectoryRecursively(String)Z` → `true` |
+| `/GLUtils/Device` | `AndroidOS::Init`, `Device.nativeInit` | `getUserAgent()` → a fixed UA; `d1`, `getAndroidId`, `getSerial`, `getSerialNo`, `getDeviceFirmware`, `getMacAddress`, `getDeviceIMEI`, `getHDIDFV`, `getHDIDFVVersion`, `getGLDID`, `getDeviceName`, `getPhoneManufacturer`, `getPhoneModel`, `retrieveDeviceCarrier`, `retrieveDeviceCountry`, `retrieveDeviceRegion`, `retrieveDeviceLanguage`, `retrieveCPUSerial`, `getPhoneDevice`, `getPhoneProduct` — all `()Ljava/lang/String;` → fixed non-null strings (`"en"`, `"US"`, `"00:00:00:00:00:00"`…) |
+| `/GLUtils/ResLoader` | `AResLoader_Init` (FindClass) | `getLength(Ljava/lang/String;)I` → the size of the APK asset or −1; `getBytes(Ljava/lang/String;)[B`; `getAssetList(Ljava/lang/String;)[Ljava/lang/String;` → an `assets/` reader (there are only `colors.conf` and `families.list`, which are also in the OBB). Return −1/`null` [I] |
+| `/installer/GameInstaller` | `AndroidOS::Init` (FindClass), `initNative` | static fields `mPreferencesName` (`Ljava/lang/String;` = `"GamePrefs"`), `m_sInstance`, `mDeviceInfo` (`Landroid/telephony/TelephonyManager;`); methods `startGame()V`, `getSDFolder()Ljava/lang/String;`. Only `mPreferencesName` is read while playing (`AndroidOS::GetSDFolder`) |
+| `/SendInfo` | `SendInfo.initMethods` | `getSDFolder()`, `getGLDID()`, `getPhoneCarrier()`, `getLocaleCountry()`, `getLocaleLanguage()`, `getManufacturerModel()` → String; `getGLUID()[I`. Tracking; optional |
 | `/DataSharing` | `DataSharing.nativeInit` | `setSharedValue(String,String)V`, `getSharedValue(String)String` → `""`, `deleteSharedValue(String)V` |
-| `/PushNotification/C2DMAndroidUtils` | `C2DMAndroidUtils.nativeInit` | `HasPushNotification()I` → **0 (se consulta en cada `Application::Update`)**; `ResetNotificationStatus()V`; `SetEnable(Z)V`; `IsEnable()Z` → false; `CancelAll()V`; `GetUserID()String`; `GetStatus(Z)I` → 0; `SendPush(Landroid/os/Bundle;String;String;Z)String`; `SendPushToMyself`, `SetOfflineDeviceCredential()I`, `SetUserCredential(String,String)I`, `SetCustomUserCredential(String,String,String)I`, `DeletePush(String,Z)I`, `GetJanusToken(String,String,String)String`, `GetBundleData()Landroid/os/Bundle;` → null, `SetDontDisturbEnable(Z)V`, `IsDontDisturbEnable()Z`, `GetRegistrationID()String` |
-| `/SplashScreenActivity` | FindClass en cada uso | `downloadWS(String)V`, `isWSReady(String)I` → 0, `isActive()I` → 0, `showLocalWS(String)V`, `deleteWS(String)V`, `SetWSLanguage(I)V` |
+| `/PushNotification/C2DMAndroidUtils` | `C2DMAndroidUtils.nativeInit` | `HasPushNotification()I` → **0 (queried on every `Application::Update`)**; `ResetNotificationStatus()V`; `SetEnable(Z)V`; `IsEnable()Z` → false; `CancelAll()V`; `GetUserID()String`; `GetStatus(Z)I` → 0; `SendPush(Landroid/os/Bundle;String;String;Z)String`; `SendPushToMyself`, `SetOfflineDeviceCredential()I`, `SetUserCredential(String,String)I`, `SetCustomUserCredential(String,String,String)I`, `DeletePush(String,Z)I`, `GetJanusToken(String,String,String)String`, `GetBundleData()Landroid/os/Bundle;` → null, `SetDontDisturbEnable(Z)V`, `IsDontDisturbEnable()Z`, `GetRegistrationID()String` |
+| `/SplashScreenActivity` | FindClass on each use | `downloadWS(String)V`, `isWSReady(String)I` → 0, `isActive()I` → 0, `showLocalWS(String)V`, `deleteWS(String)V`, `SetWSLanguage(I)V` |
 | `/InGameBrowser` | FindClass | `showForum()V` |
 | `/AdServer` | FindClass | `staticShowInterstitialWithTags(String)V` |
-| `/iab/InAppBilling` | `InAppBilling.nativeInit` | nombres ofuscados (se descifran con `InAppBilling::readChar`); **[NC]**. Usa además una clase tipo Bundle. No llamar a `InAppBilling.nativeInit*` y tolerar IDs nulos |
-| `com/gameloft/glot/PortingJNI` | `glot::IsEnvAndClassSet` (FindClass) | `getSystemUpTimeMillis()J` → ms monotónicos; `hasConnectivity()Z` → **false**; `getIdentifier()`, `getMac()`, `getDeviceName()`, `getDeviceFirmware()`, `getDeviceLanguage()`, `getDeviceCountry()`, `getDeviceCarrier()` → String fijas |
+| `/iab/InAppBilling` | `InAppBilling.nativeInit` | obfuscated names (decoded with `InAppBilling::readChar`); **[NC]**. Also uses a Bundle-like class. Do not call `InAppBilling.nativeInit*` and tolerate null IDs |
+| `com/gameloft/glot/PortingJNI` | `glot::IsEnvAndClassSet` (FindClass) | `getSystemUpTimeMillis()J` → monotonic ms; `hasConnectivity()Z` → **false**; `getIdentifier()`, `getMac()`, `getDeviceName()`, `getDeviceFirmware()`, `getDeviceLanguage()`, `getDeviceCountry()`, `getDeviceCarrier()` → fixed Strings |
 
-### 5.3 Social (todas opcionales; IDs cacheados en los `nativeInit` respectivos)
+### 5.3 Social (all optional; IDs cached in the respective `nativeInit`s)
 
 - `com/gameloft/GLSocialLib/facebook/FacebookAndroidGLSocialLib`: `Init(ZLjava/lang/String;)V`, `Login`, `Logout`, `GetMyInfo`, `GetFriends…`, `PostToWall…`,
   `postOpenGraphAction`, `GetPicture`, `getUserAchievements`… (`V`), `IsLoggedIn()Z` → **false**, `hasPermission(String)Z` → false, `getAccessToken()String` → `""`.
 - `com/gameloft/GLSocialLib/GameAPI/GameAPIAndroidGLSocialLib`: `InitGameAPI`, `ConnectToService`, `ShowAchievements`, `UnlockAchievement`, `SubmitScore`…
   (`V`), `IsLoggedIn()Z` → false, `GetAccessToken()String` → `""`.
 - `com/gameloft/GLSocialLib/PlatformAndroid`: `GetDataFromURL(Ljava/lang/String;)[B` → `null`.
-- `…/renren/RenrenAndroidGLSocialLib`: clase ausente en este APK (los `Java_*` existen); ignorar.
+- `…/renren/RenrenAndroidGLSocialLib`: the class is missing from this APK (the `Java_*` exist); ignore it.
 
-### 5.4 Clases del framework Android que el nativo usa directamente
+### 5.4 Android framework classes the native code uses directly
 
-| Clase | Uso | Stub |
+| Class | Use | Stub |
 |---|---|---|
-| **`android/media/AudioTrack`** | **salida de audio por defecto** (§8): `<init>(IIIIII)V`, static `getMinBufferSize(III)I`, static `getNativeOutputSampleRate(I)I`, `play()V`, `pause()V`, `stop()V`, `release()V`, `write([BII)I`, `getPlayState()I` | implementación real sobre SDL (T6/T7) |
+| **`android/media/AudioTrack`** | **the default audio output** (§8): `<init>(IIIIII)V`, static `getMinBufferSize(III)I`, static `getNativeOutputSampleRate(I)I`, `play()V`, `pause()V`, `stop()V`, `release()V`, `write([BII)I`, `getPlayState()I` | a real implementation on SDL (T6/T7) |
 | `android/os/Process` | `glf::Thread::Impl::SetPriority` → static `setThreadPriority(I)V` | no-op |
-| `android/os/Bundle` | `ABundle::init`: `<init>()V`, `putString`, `getString`, `getInt`, `putInt`, `getLong`, `putLong`, `getBoolean`, `putBoolean`, `containsKey(String)Z`, `clear()V`, `getByteArray`, `putByteArray` | mapa clave→valor real (lo usan preferencias `nativeSet/GetPreference`, push e IAP) |
-| `android/view/ViewRoot` | `Game.processTouchpadAsPointer` → `setProcessPositionEvents(Z)V` | no llamar a ese nativo |
-| `android/telephony/TelephonyManager`, `android/os/Build`, `android/os/Build$VERSION`, `android/os/SystemProperties`, `android/provider/Settings$Secure`, `android/content/Context`, `java/util/UUID` | solo en `GameInstaller.nativeGetDevID` (DRM) | no llamar |
+| `android/os/Bundle` | `ABundle::init`: `<init>()V`, `putString`, `getString`, `getInt`, `putInt`, `getLong`, `putLong`, `getBoolean`, `putBoolean`, `containsKey(String)Z`, `clear()V`, `getByteArray`, `putByteArray` | a real key→value map (used by the `nativeSet/GetPreference` preferences, push and IAP) |
+| `android/view/ViewRoot` | `Game.processTouchpadAsPointer` → `setProcessPositionEvents(Z)V` | do not call that native |
+| `android/telephony/TelephonyManager`, `android/os/Build`, `android/os/Build$VERSION`, `android/os/SystemProperties`, `android/provider/Settings$Secure`, `android/content/Context`, `java/util/UUID` | only in `GameInstaller.nativeGetDevID` (DRM) | do not call |
 
 ---
 
-## 6. Archivos
+## 6. Files
 
-### 6.1 Rutas
+### 6.1 Paths
 
-Todas las rutas absolutas salen de tres valores que da Java (copiados en `Game.nativeInit`), más literales:
+All absolute paths come from three values provided by Java (copied in `Game.nativeInit`), plus literals:
 
-| Origen | Valor Android | Uso |
+| Source | Android value | Use |
 |---|---|---|
-| `getSDFolder()` → `GetSDFolderPathPointer()` | `/sdcard/android/data/com.gameloft.android.ANMP.GloftZOHM/files` | `m_gAppPath = sd + "/"` (directorio de datos de trabajo: descargas, `d_o_w_n_l_o_a_d_e_d.txt`, ficheros extraídos, trofeos); `CopyPath()` |
+| `getSDFolder()` → `GetSDFolderPathPointer()` | `/sdcard/android/data/com.gameloft.android.ANMP.GloftZOHM/files` | `m_gAppPath = sd + "/"` (working data directory: downloads, `d_o_w_n_l_o_a_d_e_d.txt`, extracted files, trophies); `CopyPath()` |
 | `getSaveFolder()` → `GetSaveFolderPathPointer()` | `/data/data/com.gameloft.android.ANMP.GloftZOHM` | saves; `CopySPath()` |
-| `GetObbPath()` + `Get{Main,Patch,Extra}ObbName()` | `/sdcard/Android/obb/<pkg>/` + nombre | OBB montados como archivo |
-| literales en `.rodata` | `/data/data/<pkg>/player.dat`, `/data/data/<pkg>/playerbckp.dat`, `/data/data/<pkg>/heatup.dat`, `/data/data/<pkg>/Playtest.txt|csv` | **save principal y su copia** (rutas *hardcoded*, no pasan por `getSaveFolder`) |
-| literales | `/proc/meminfo` (lee `MemTotal:` para el perfil de memoria), `/sdcard/gameloft/games/ANDROID.txt`, `/system/app/Superuser.apk`, `/system/bin/su`, `/system/xbin/su` | sondas; pueden no existir |
+| `GetObbPath()` + `Get{Main,Patch,Extra}ObbName()` | `/sdcard/Android/obb/<pkg>/` + name | OBBs mounted as archives |
+| literals in `.rodata` | `/data/data/<pkg>/player.dat`, `/data/data/<pkg>/playerbckp.dat`, `/data/data/<pkg>/heatup.dat`, `/data/data/<pkg>/Playtest.txt|csv` | **the main save and its copy** (*hardcoded* paths that do not go through `getSaveFolder`) |
+| literals | `/proc/meminfo` (reads `MemTotal:` for the memory profile), `/sdcard/gameloft/games/ANDROID.txt`, `/system/app/Superuser.apk`, `/system/bin/su`, `/system/xbin/su` | probes; may not exist |
 
-Otros nombres relativos al directorio de save/datos vistos en `.rodata`: `/level.dat`, `/zomb.dat`, `/dlc.dat`, `/cloudlevel.dat`, `/cloudplayer.dat`,
+Other names relative to the save/data directory seen in `.rodata`: `/level.dat`, `/zomb.dat`, `/dlc.dat`, `/cloudlevel.dat`, `/cloudplayer.dat`,
 `/cloudzomb.dat`, `/BackupCloudData.dat`, `/Nope.dat`, `/Nogplus.dat`, `serverConfig.sav`, `c2dm.sav`, `tracker%d.dat`, `tracking_markers.dat`,
-`error_events.dat`, `ses_info.dat`, `user_data.dat`, `r_ev.dat`, `w_ev.dat`, `aux_file_data.dat`, sufijos `.sav`, `.data`, `.tmp`, `.bin`, `promo.xml`.
+`error_events.dat`, `ses_info.dat`, `user_data.dat`, `r_ev.dat`, `w_ev.dat`, `aux_file_data.dat`, suffixes `.sav`, `.data`, `.tmp`, `.bin`, `promo.xml`.
 
-**Recomendación (T4)**: una capa de traducción de rutas en `fopen/stat/opendir/mkdir/remove/rename/unlink/open`:
-`/data/data/com.gameloft.android.ANMP.GloftZOHM/**` → `<userdir>/save/**`; `/sdcard/android/data/<pkg>/files/**` (comparar sin distinguir mayúsculas:
-aparece `android` y `Android`) → `<userdir>/files/**`; `/sdcard/Android/obb/<pkg>/**` → carpeta de OBB del usuario; `/proc/meminfo` → fichero sintético
-(`MemTotal:  2097152 kB`); resto → `ENOENT`. Crear los directorios de antemano (el nativo solo hace `mkdir` de subcarpetas).
+**Recommendation (T4)**: a path translation layer in `fopen/stat/opendir/mkdir/remove/rename/unlink/open`:
+`/data/data/com.gameloft.android.ANMP.GloftZOHM/**` → `<userdir>/save/**`; `/sdcard/android/data/<pkg>/files/**` (compare case-insensitively:
+both `android` and `Android` appear) → `<userdir>/files/**`; `/sdcard/Android/obb/<pkg>/**` → the user's OBB folder; `/proc/meminfo` → a synthetic file
+(`MemTotal:  2097152 kB`); everything else → `ENOENT`. Create the directories beforehand (the native code only `mkdir`s subfolders).
 
-Acceso a ficheros del motor: `glf::FileStreamImpl` → `fopen(path, "rb" | "wb" | "r+b" | "a+b")`, `fseek/ftell` para el tamaño, `fread/fwrite`, **`pread` con
-`FILE->_file`** (§3) para lecturas asíncronas (`FileStreamImpl::ReadASync` crea un `glf::Thread`), `fflush + fsync + fclose`. Directorios con
-`opendir/readdir/closedir` (`glf::fs::DirHandle::FindFirst`), `mkdir` (`glf::Fs::MkDir`), `unlink/remove/rename`, `stat` (17 sitios), `chdir/getcwd` (cwd virtual).
+Engine file access: `glf::FileStreamImpl` → `fopen(path, "rb" | "wb" | "r+b" | "a+b")`, `fseek/ftell` for the size, `fread/fwrite`, **`pread` with
+`FILE->_file`** (§3) for asynchronous reads (`FileStreamImpl::ReadASync` creates a `glf::Thread`), `fflush + fsync + fclose`. Directories via
+`opendir/readdir/closedir` (`glf::fs::DirHandle::FindFirst`), `mkdir` (`glf::Fs::MkDir`), `unlink/remove/rename`, `stat` (17 sites), `chdir/getcwd` (virtual cwd).
 
-### 6.2 OBB y `.bar`
+### 6.2 OBB and `.bar`
 
-- **Los `.obb` son ZIP estándar** y **el nativo los abre directamente** (no espera los datos extraídos): `Application::SetupDevice` hace, sobre el
-  `IFileSystem` de Glitch (`device+0x2c`, método virtual `+0x1c`, args `(path, 1, 1, 1)`), en este orden: **patch** (si el nombre no es vacío) →
-  **extra** (si no vacío) → **main**. Con la semántica de Irrlicht (se busca en orden de alta) el patch tiene prioridad sobre el main [I].
-  Antes: `glf::fs::SetAlternateDataDir(0, "./")` y `SetAlternateDataDir(1, <ruta global>)`.
-- El instalador Java (`GameInstaller`) además **extrae** el OBB entrada por entrada a `sd_folder` (y valida tamaños/CRC). El port no necesita esa copia para
-  el motor [I]; solo hay que dar al nativo los dos `.obb` tal cual. Si aparece algún acceso a un fichero suelto en `sd_folder` (p. ej. Vox con
-  `nativeGetObbPath` en `VoxSoundManager::VoxSoundManager`, que abre los sonidos desde el OBB), T9 puede extraer el OBB como hace Java (main y luego patch
-  sobrescribiendo) — **[NC]** qué ficheros concretos se piden sueltos.
-- `main.1501….obb` (289 401 986 bytes): 562 entradas, **todas STORED** (método 0, sin cifrar, sin *data descriptor*): 436 `.wav`, 64 `.mpc` (Musepack SV8,
-  magia `MPCK`), 8 `.vxn` (Vox nativo), 22 `.bdae`, **15 `.bar`**, `zombies.swf` (1.76 MB), `zombies_load.swf`, y configuración (`gamesettings.xml`,
+- **The `.obb` files are standard ZIPs** and **the native code opens them directly** (it does not expect extracted data): `Application::SetupDevice` calls, on
+  Glitch's `IFileSystem` (`device+0x2c`, virtual method `+0x1c`, args `(path, 1, 1, 1)`), in this order: **patch** (if the name is not empty) →
+  **extra** (if not empty) → **main**. With Irrlicht semantics (searched in the order added) the patch takes priority over the main [I].
+  Before that: `glf::fs::SetAlternateDataDir(0, "./")` and `SetAlternateDataDir(1, <global path>)`.
+- The Java installer (`GameInstaller`) also **extracts** the OBB entry by entry into `sd_folder` (and validates sizes/CRCs). The port does not need that copy for
+  the engine [I]; it only has to give the native code the two `.obb` files as they are. If some access to a loose file in `sd_folder` shows up (e.g. Vox with
+  `nativeGetObbPath` in `VoxSoundManager::VoxSoundManager`, which opens the sounds from the OBB), T9 can extract the OBB as Java does (main, then the patch
+  overwriting) — **[NC]** which specific files are requested loose.
+- `main.1501….obb` (289,401,986 bytes): 562 entries, **all STORED** (method 0, unencrypted, no *data descriptor*): 436 `.wav`, 64 `.mpc` (Musepack SV8,
+  magic `MPCK`), 8 `.vxn` (native Vox), 22 `.bdae`, **15 `.bar`**, `zombies.swf` (1.76 MB), `zombies_load.swf`, and configuration (`gamesettings.xml`,
   `debugsettings.xml`, `techniques.xml`, `tracker.xml`, `eventParameters.xml`, `eventsParameters.json`, `snsconfig.json`, `ZOMBIES_SDD_VOX.xml`,
   `Zombiewood_SDD_Vox_1.1.xml`, `soundsInfo.dat`, `PackedWaves*_sounds.txt`, `colors.conf`, `families.list`, `GameVersion.txt` = `1.5.0`).
-- `patch.15325….obb` (1 479 926 bytes): 2 entradas **DEFLATED**: `effects.bar` y `zombies.swf` (sustituyen a las del main).
-- **`.bar` = ZIP anidado** (misma firma `PK\x03\x04`; sin cabecera propia). Dentro del main van STORED, así que se pueden leer por offset sin extraer.
-  Excepción: `oconf.bar` (168 bytes) es **texto plano** (`XPlayerURL: …`, `GGI: 27991`, `GameVer: 1.5.0`…).
+- `patch.15325….obb` (1,479,926 bytes): 2 **DEFLATED** entries: `effects.bar` and `zombies.swf` (they replace the main's).
+- **`.bar` = a nested ZIP** (same `PK\x03\x04` signature; no header of its own). Inside the main they are STORED, so they can be read by offset without extracting.
+  Exception: `oconf.bar` (168 bytes) is **plain text** (`XPlayerURL: …`, `GGI: 27991`, `GameVer: 1.5.0`…).
 
-  | `.bar` | Entradas | Contenido |
+  | `.bar` | Entries | Contents |
   |---|---|---|
   | `actors.bar` | 520 | `.tga` (341), `.bdae` (154), `.png` (25) |
   | `weapons.bar` | 531 | `.bdae`, `.png`, `.tga` |
-  | `swfs.bar` | 546 | `.png` (texturas del UI Flash; 489 STORED) |
+  | `swfs.bar` | 546 | `.png` (Flash UI textures; 489 STORED) |
   | `location_{BuildingTop,HauntedMansion,Hollywood,SantaMonica,Studio,mp}.bar` | 222/95/343/293/8/13 | `.tga`, `.bdae`, `.irr`, `.png` |
   | `levels.bar` | 143 | `.lvc` (142), `.bin` |
-  | `effects.bar` | 127 | **92 `.glsl`**, 31 `.bdae` (materiales/efectos COLLADA binario), `glsl.config`, `GLSL/file.map`, `shaderMap.json` |
+  | `effects.bar` | 127 | **92 `.glsl`**, 31 `.bdae` (materials/effects, binary COLLADA), `glsl.config`, `GLSL/file.map`, `shaderMap.json` |
   | `fonts.bar` | 8 | `.ttf` |
   | `particlesystems.bar` | 22 | `.png`, `.tga`, `.bin` |
-  | `zombies_strings.bar` | 23 | tablas de texto por idioma (`zombies_text_{en,fr,de,es,it,br,ja,ko,cn,ru,tr,vo}`, `android_*`) |
+  | `zombies_strings.bar` | 23 | per-language text tables (`zombies_text_{en,fr,de,es,it,br,ja,ko,cn,ru,tr,vo}`, `android_*`) |
 
-- **Tercer nivel**: muchos "ficheros" dentro de un `.bar` son a su vez ZIP: los `.bdae` contienen `little_endian_not_quantized.bdae` (magia `BRES`) +
-  `version.nfo`; las texturas con alfa (`*.tga`, `*.png` lógicos) contienen `SPLIT` (4 bytes) + `rgb.ktx` + `alpha.ktx`. El motor resuelve esto solo
-  (lector ZIP de Glitch + zlib interno); **la HLE solo tiene que servir `fopen/fread/fseek/pread` correctos sobre el `.obb`**.
-- Cómo abre el motor un `.bar` dentro del OBB (por offset sobre el mismo `FILE*`, o cargándolo a memoria): **[NC]**. Nombres de `.bar` referenciados en
-  `.rodata`: los 15 anteriores + `winter_assets.bar` (no existe en estos OBB; contenido opcional).
-- Formatos de imagen reales tras descomprimir (todos los `.bar` del main): **1 918 KTX** (todos `glInternalFormat = 0x8D64 GL_ETC1_RGB8_OES`, con mipmaps),
-  530 PNG reales, 23 TGA sin comprimir (tipo 2, 24/32 bpp) y **19 PVR v2** en `swfs.bar` con extensión `.png` (cabecera de 52 bytes, magia `PVR!`,
-  formato `0x19` = **PVRTC 4bpp**, p. ej. `posters_03.png` 1024×1024). Ver §7.
+- **A third level**: many "files" inside a `.bar` are ZIPs themselves: the `.bdae` files contain `little_endian_not_quantized.bdae` (magic `BRES`) +
+  `version.nfo`; textures with alpha (logical `*.tga`, `*.png`) contain `SPLIT` (4 bytes) + `rgb.ktx` + `alpha.ktx`. The engine resolves all of this on its own
+  (Glitch's ZIP reader + internal zlib); **the HLE only has to serve correct `fopen/fread/fseek/pread` on the `.obb`**.
+- How the engine opens a `.bar` inside the OBB (by offset on the same `FILE*`, or loading it into memory): **[NC]**. `.bar` names referenced in
+  `.rodata`: the 15 above + `winter_assets.bar` (it does not exist in these OBBs; optional content).
+- Actual image formats after decompressing (every `.bar` in the main): **1,918 KTX** (all `glInternalFormat = 0x8D64 GL_ETC1_RGB8_OES`, with mipmaps),
+  530 real PNGs, 23 uncompressed TGAs (type 2, 24/32 bpp) and **19 PVR v2** in `swfs.bar` with a `.png` extension (52-byte header, magic `PVR!`,
+  format `0x19` = **PVRTC 4bpp**, e.g. `posters_03.png` 1024×1024). See §7.
 
 ---
 
-## 7. Gráficos
+## 7. Graphics
 
-- **GLES 2.0** exclusivamente: Java crea el contexto con `EGL_CONTEXT_CLIENT_VERSION = 2` y `CGlfDevice::createDriver` → `createOpenGLES2Driver`
-  (`CCommonGLDriver<CProgrammableGLDriver<…CGLSLShaderHandler…>>`). No se importa ninguna función de pipeline fijo. EGL lo gestiona Java: el nativo **no**
-  llama a EGL ni hace *swap*; pide cambio de contexto vía `GL2JNILib.setCurrentContext(I)Z`.
-- **Contextos**: `getNumExtraContext()` devuelve 0 → un solo contexto, en el hilo GL. `glf::App::ReserveContext()` (llamado por
-  `glitch::thread::this_thread::reserveContext` desde hilos de tareas) falla limpiamente cuando no hay contextos extra y `SetAsMainThread()` llama
-  `setCurrentContext(0 | -1)`. → T5 puede asumir **un contexto y un hilo GL** [I] (si se quisiera carga de texturas multihilo habría que cambiar
-  `CreationSettings+0x3c` y dar contextos compartidos; no recomendado).
-- **Framebuffer por defecto pedido** (`setViewSettings`): color 16 bpp (RGB565), depth 16 (Java prueba 24), stencil 8 solo si la GPU está en la lista de
-  §4, sin MSAA/CSAA. En PC: pedir RGBA8 + D24S8 no rompe nada.
-- **`glGetString`**: 6 sitios. `genericDriverInit` consulta `GL_VERSION` (espera formato `"OpenGL ES <maj>.<min> …"`: busca `"OpenGL "` y parsea `%u.%u`; avisa
-  si < 1.1), `GL_RENDERER` (compara con `"Mali-400 MP"` para un workaround de *vertex attrib shadow state*), `GL_VENDOR`, `GL_EXTENSIONS`
-  (`CCommonGLDriverBase::initExtensions`); `CGLSLShaderHandler::doVersionCheck` consulta `GL_SHADING_LANGUAGE_VERSION` (`"OpenGL ES GLSL ES 1.00"`).
-  **Recomendación**: T5 sintetiza las cadenas en memoria guest: `GL_VERSION = "OpenGL ES 2.0"`, `GL_SHADING_LANGUAGE_VERSION = "OpenGL ES GLSL ES 1.00"`,
-  `GL_VENDOR`/`GL_RENDERER` = los de un Adreno (coherente con `nativeSetGPUInfo`), y una lista de extensiones **filtrada** (lista blanca).
-- **Extensiones**: `initExtensions` compara contra una tabla genérica de ~300 nombres de Glitch (`0xb9b700`–`0xb9e400`, incluye extensiones de escritorio).
-  Las que tienen efecto práctico con los imports presentes: `GL_OES_compressed_ETC1_RGB8_texture`, `GL_IMG_texture_compression_pvrtc`,
+- **GLES 2.0** exclusively: Java creates the context with `EGL_CONTEXT_CLIENT_VERSION = 2` and `CGlfDevice::createDriver` → `createOpenGLES2Driver`
+  (`CCommonGLDriver<CProgrammableGLDriver<…CGLSLShaderHandler…>>`). No fixed-pipeline function is imported. Java manages EGL: the native code does **not**
+  call EGL or *swap*; it requests context switches via `GL2JNILib.setCurrentContext(I)Z`.
+- **Contexts**: `getNumExtraContext()` returns 0 → a single context, on the GL thread. `glf::App::ReserveContext()` (called by
+  `glitch::thread::this_thread::reserveContext` from task threads) fails cleanly when there are no extra contexts, and `SetAsMainThread()` calls
+  `setCurrentContext(0 | -1)`. → T5 can assume **one context and one GL thread** [I] (multithreaded texture loading would require changing
+  `CreationSettings+0x3c` and providing shared contexts; not recommended).
+- **Requested default framebuffer** (`setViewSettings`): 16 bpp color (RGB565), depth 16 (Java tries 24), stencil 8 only if the GPU is in the list in
+  §4, no MSAA/CSAA. On PC, requesting RGBA8 + D24S8 breaks nothing.
+- **`glGetString`**: 6 sites. `genericDriverInit` queries `GL_VERSION` (expects the format `"OpenGL ES <maj>.<min> …"`: looks for `"OpenGL "` and parses `%u.%u`; warns
+  if < 1.1), `GL_RENDERER` (compared with `"Mali-400 MP"` for a *vertex attrib shadow state* workaround), `GL_VENDOR`, `GL_EXTENSIONS`
+  (`CCommonGLDriverBase::initExtensions`); `CGLSLShaderHandler::doVersionCheck` queries `GL_SHADING_LANGUAGE_VERSION` (`"OpenGL ES GLSL ES 1.00"`).
+  **Recommendation**: T5 synthesizes the strings in guest memory: `GL_VERSION = "OpenGL ES 2.0"`, `GL_SHADING_LANGUAGE_VERSION = "OpenGL ES GLSL ES 1.00"`,
+  `GL_VENDOR`/`GL_RENDERER` = an Adreno's (consistent with `nativeSetGPUInfo`), and a **filtered** extension list (an allowlist).
+- **Extensions**: `initExtensions` compares against a generic Glitch table of ~300 names (`0xb9b700`–`0xb9e400`, including desktop extensions).
+  The ones with practical effect given the imports present: `GL_OES_compressed_ETC1_RGB8_texture`, `GL_IMG_texture_compression_pvrtc`,
   `GL_AMD_compressed_ATC_texture`, `GL_EXT_texture_compression_dxt1`/`s3tc`, `GL_OES_mapbuffer` (`glMapBufferOES/glUnmapBufferOES`), `GL_OES_texture_3D`
   (`gl*3DOES`), `GL_OES_depth24`, `GL_OES_packed_depth_stencil`, `GL_OES_depth_texture`, `GL_OES_rgb8_rgba8`, `GL_OES_element_index_uint`,
   `GL_OES_texture_npot`, `GL_OES_standard_derivatives`, `GL_OES_vertex_half_float`, `GL_OES_texture_float/half_float`, `GL_EXT_texture_format_BGRA8888`,
-  `GL_EXT_discard_framebuffer`, `GL_OES_vertex_array_object`, `GL_OES_get_program_binary`. Qué rama toma el driver para cada una: **[NC]** (no decompilado
-  entero). Lista blanca sugerida: `GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth24 GL_OES_packed_depth_stencil GL_OES_rgb8_rgba8
-  GL_OES_element_index_uint GL_OES_texture_npot GL_OES_standard_derivatives GL_OES_depth_texture` y, solo si T5 implementa el *shadow buffer*,
-  `GL_OES_mapbuffer`. **No** anunciar `GL_OES_texture_3D`, `GL_OES_vertex_array_object`, `GL_OES_get_program_binary` ni PVRTC/ATC/DXT.
-- **Texturas comprimidas**: un único sitio llama a `glCompressedTexImage2D` (`CTexture::updateData`), otro a `…SubImage2D` y a las variantes `3DOES`.
-  Cargadores presentes: `CImageLoaderKTX`, `PVR`, `DDS`, `PNG`, `JPG`, `TGA`, `BMP`. Datos reales: **ETC1 en KTX (1 918)** + 19 PVRTC4.
-  - **ETC1**: no se ha encontrado decodificador software de ETC1 en el `.so` → **hay que anunciar `GL_OES_compressed_ETC1_RGB8_texture`** y aceptar
-    `internalformat 0x8D64`. ANGLE/D3D11 lo expone normalmente (lo transcodifica a RGBA8); si un backend no lo expone, T5 debe decodificar ETC1 a RGB8 en el
-    thunk de `glCompressedTexImage2D` (≈150 líneas) y llamar a `glTexImage2D`. El alfa va en una segunda textura ETC1 (`alpha.ktx`) que mezcla el shader.
-  - **PVRTC**: existe `PVRTCDecompress(const void*, int, int, int, uchar*)` llamado desde `glitch::video::pixel_format::convert` → el motor descomprime
-    por software cuando el formato no está soportado [I]. No anunciar `GL_IMG_texture_compression_pvrtc`. Si aun así llegara `0x8C00–0x8C03` a
-    `glCompressedTexImage2D`, devolver `GL_INVALID_ENUM` (riesgo: 19 pósters del UI en blanco).
-  - `GetTextureFormat()` (Java) = 4 (ETC1) por coherencia.
-- **Texturas 3D** (`glTexImage3DOES`, `glCompressedTexImage3DOES`, sub-variantes): solo alcanzables con `GL_OES_texture_3D`; no hay texturas 3D en los
-  datos. Stub que pone `GL_INVALID_OPERATION`.
-- **Shaders**: GLSL ES 1.00 en texto, en `effects.bar` (`*VS.glsl`/`*FS.glsl`, con `precision` por variable: `uniform lowp sampler2D …`, `varying mediump vec2 …`),
-  referenciados por los efectos `.bdae` y `shaderMap.json`/`glsl.config`; también `%s/%s.shd` y `shader.xml` en `.rodata` (ruta alternativa [NC]). El motor
-  antepone `#define`s y llama `glShaderSource` (vía veneer) con varias cadenas, `glCompileShader`, `glGetShaderiv/InfoLog`, `glLinkProgram`,
-  `glGetActiveAttrib/Uniform`, `glGet{Attrib,Uniform}Location`. No usa binarios de programa (no importa `glProgramBinaryOES`). ANGLE acepta ESSL 1.00 tal cual.
-- **Otros puntos GL** (99 imports, todos usados): FBO completo (`glGen/Bind/Delete{Framebuffers,Renderbuffers}`, `glFramebufferTexture2D`,
-  `glFramebufferRenderbuffer`, `glRenderbufferStorage`, `glCheckFramebufferStatus`) → post-efectos (`Bloom*`, `UsePostEffects=1` en `gamesettings.xml`);
-  `glCopyTexSubImage2D`, `glGenerateMipmap`, `glReadPixels` (capturas/depurador), `glPolygonOffset`, `glSampleCoverage`, `glBlendColor/Equation`, `glLineWidth`,
-  uniformes `1f/1fv/1i/1iv/2fv/2iv/3fv/3iv/4fv/4iv/Matrix4fv` (no hay `Matrix2fv/3fv`), `glVertexAttrib4f`, `glVertexAttribPointer`, `glDrawArrays/Elements`.
-- **Riesgos frente a ANGLE / traducción de punteros (T5)**:
-  1. `glVertexAttribPointer`/`glDrawElements` con **punteros guest a arrays en cliente** (sin VBO): hay 26 sitios de `glBindBuffer` y 3 de `glBufferData`,
-     así que se usan ambos modos [I]. Traducir guest→host y garantizar que el dato sigue vivo hasta el *draw* (con memoria guest mapeada 1:1 en el host
-     basta con sumar la base).
-  2. `glMapBufferOES` devuelve puntero: ANGLE devolvería un puntero host fuera del espacio guest → *shadow buffer* en memoria guest y `glBufferSubData`
-     en `glUnmapBufferOES`, o no anunciar la extensión.
-  3. `glGetString`, `glGet*InfoLog`, `glGetActive*`, `glGetShaderSource`, `glGenTextures/Buffers/…`, `glGetIntegerv/Floatv`, `glReadPixels`: punteros de salida guest.
-  4. `glShaderSource`: `const char **` guest (array de punteros de 32 bits) + `const GLint *length` opcional.
-  5. Precisión: shaders escritos para móviles (`lowp/mediump`); en D3D11 todo es `highp`, sin problema. `GL_OES_standard_derivatives` debe estar si algún shader usa `dFdx` [NC].
-  6. RGB565/RGBA4444/RGBA5551 en `glTexImage2D` (formatos habituales de Glitch): ANGLE los soporta.
-  7. El nativo asume que el *viewport*/tamaño lo fija `resize(w,h)`; un cambio de tamaño de ventana debe repetir `glViewport` + `GL2JNILib.resize`.
+  `GL_EXT_discard_framebuffer`, `GL_OES_vertex_array_object`, `GL_OES_get_program_binary`. Which branch the driver takes for each one: **[NC]** (not fully
+  decompiled). Suggested allowlist: `GL_OES_compressed_ETC1_RGB8_texture GL_OES_depth24 GL_OES_packed_depth_stencil GL_OES_rgb8_rgba8
+  GL_OES_element_index_uint GL_OES_texture_npot GL_OES_standard_derivatives GL_OES_depth_texture` and, only if T5 implements the *shadow buffer*,
+  `GL_OES_mapbuffer`. Do **not** advertise `GL_OES_texture_3D`, `GL_OES_vertex_array_object`, `GL_OES_get_program_binary` or PVRTC/ATC/DXT.
+- **Compressed textures**: a single site calls `glCompressedTexImage2D` (`CTexture::updateData`), another calls `…SubImage2D` and the `3DOES` variants.
+  Loaders present: `CImageLoaderKTX`, `PVR`, `DDS`, `PNG`, `JPG`, `TGA`, `BMP`. Actual data: **ETC1 in KTX (1,918)** + 19 PVRTC4.
+  - **ETC1**: no software ETC1 decoder was found in the `.so` → **`GL_OES_compressed_ETC1_RGB8_texture` must be advertised** and
+    `internalformat 0x8D64` accepted. ANGLE/D3D11 normally exposes it (transcoding it to RGBA8); if a backend does not expose it, T5 must decode ETC1 to RGB8 in the
+    `glCompressedTexImage2D` thunk (≈150 lines) and call `glTexImage2D`. Alpha lives in a second ETC1 texture (`alpha.ktx`) that the shader blends.
+  - **PVRTC**: there is a `PVRTCDecompress(const void*, int, int, int, uchar*)` called from `glitch::video::pixel_format::convert` → the engine decompresses
+    in software when the format is unsupported [I]. Do not advertise `GL_IMG_texture_compression_pvrtc`. If `0x8C00–0x8C03` still reaches
+    `glCompressedTexImage2D`, return `GL_INVALID_ENUM` (risk: 19 blank UI posters).
+  - `GetTextureFormat()` (Java) = 4 (ETC1) for consistency.
+  - (Measured later in T2/T5: ANGLE 2.1.7258 does **not** expose the ETC1 extension, but ETC1 data uploads bit-exactly as `GL_COMPRESSED_RGB8_ETC2`, with a software decoder as a fallback.)
+- **3D textures** (`glTexImage3DOES`, `glCompressedTexImage3DOES`, sub-variants): only reachable with `GL_OES_texture_3D`; there are no 3D textures in the
+  data. A stub that sets `GL_INVALID_OPERATION`.
+- **Shaders**: GLSL ES 1.00 as text, in `effects.bar` (`*VS.glsl`/`*FS.glsl`, with per-variable `precision`: `uniform lowp sampler2D …`, `varying mediump vec2 …`),
+  referenced by the `.bdae` effects and `shaderMap.json`/`glsl.config`; also `%s/%s.shd` and `shader.xml` in `.rodata` (an alternative path [NC]). The engine
+  prepends `#define`s and calls `glShaderSource` (via a veneer) with several strings, `glCompileShader`, `glGetShaderiv/InfoLog`, `glLinkProgram`,
+  `glGetActiveAttrib/Uniform`, `glGet{Attrib,Uniform}Location`. It does not use program binaries (no `glProgramBinaryOES` import). ANGLE accepts ESSL 1.00 as-is.
+- **Other GL points** (99 imports, all used): full FBO support (`glGen/Bind/Delete{Framebuffers,Renderbuffers}`, `glFramebufferTexture2D`,
+  `glFramebufferRenderbuffer`, `glRenderbufferStorage`, `glCheckFramebufferStatus`) → post-effects (`Bloom*`, `UsePostEffects=1` in `gamesettings.xml`);
+  `glCopyTexSubImage2D`, `glGenerateMipmap`, `glReadPixels` (screenshots/debugger), `glPolygonOffset`, `glSampleCoverage`, `glBlendColor/Equation`, `glLineWidth`,
+  uniforms `1f/1fv/1i/1iv/2fv/2iv/3fv/3iv/4fv/4iv/Matrix4fv` (no `Matrix2fv/3fv`), `glVertexAttrib4f`, `glVertexAttribPointer`, `glDrawArrays/Elements`.
+- **Risks with ANGLE / pointer translation (T5)**:
+  1. `glVertexAttribPointer`/`glDrawElements` with **guest pointers to client-side arrays** (no VBO): there are 26 `glBindBuffer` sites and 3 `glBufferData` sites,
+     so both modes are used [I]. Translate guest→host and make sure the data is still alive at *draw* time (with guest memory mapped 1:1 on the host,
+     adding the base is enough).
+  2. `glMapBufferOES` returns a pointer: ANGLE would return a host pointer outside the guest space → a *shadow buffer* in guest memory and `glBufferSubData`
+     in `glUnmapBufferOES`, or do not advertise the extension.
+  3. `glGetString`, `glGet*InfoLog`, `glGetActive*`, `glGetShaderSource`, `glGenTextures/Buffers/…`, `glGetIntegerv/Floatv`, `glReadPixels`: guest output pointers.
+  4. `glShaderSource`: a guest `const char **` (an array of 32-bit pointers) + an optional `const GLint *length`.
+  5. Precision: shaders written for mobile (`lowp/mediump`); on D3D11 everything is `highp`, no problem. `GL_OES_standard_derivatives` must be present if any shader uses `dFdx` [NC].
+  6. RGB565/RGBA4444/RGBA5551 in `glTexImage2D` (Glitch's usual formats): ANGLE supports them.
+  7. The native code assumes the *viewport*/size is set by `resize(w,h)`; a window resize must repeat `glViewport` + `GL2JNILib.resize`.
 
 ---
 
-## 8. Audio y vídeo
+## 8. Audio and video
 
-Motor **Vox** (`vox::DriverAndroid`, `vox_driver_android.cpp`). Tiene dos backends y elige en `DriverAndroid::Init`:
+The **Vox** engine (`vox::DriverAndroid`, `vox_driver_android.cpp`). It has two backends and picks one in `DriverAndroid::Init`:
 
 ```
 if (DriverAndroid::s_androidAPILevel > 8)  _InitOSL();   // OpenSL ES
-else                                        _InitAT();    // android.media.AudioTrack por JNI
+else                                        _InitAT();    // android.media.AudioTrack via JNI
 ```
 
-`s_androidAPILevel` (`.data`, `0xcd6034`) vale **3** de fábrica y solo lo cambia el export `VoxSetAndroidAPILevel(int)`, que **nadie llama** (ni nativo
-ni Java). → **En el APK real el audio sale por `AudioTrack` (JNI), no por OpenSL.** El port puede elegir:
+`s_androidAPILevel` (`.data`, `0xcd6034`) is **3** out of the box and is only changed by the export `VoxSetAndroidAPILevel(int)`, which **nobody calls** (neither native
+nor Java). → **In the real APK audio goes out through `AudioTrack` (JNI), not OpenSL.** The port can choose:
 
-**Opción A (comportamiento original, recomendada): AudioTrack falso en T7 + SDL en T6.**
+**Option A (the original behavior, recommended): a fake AudioTrack in T7 + SDL in T6.**
 
-- `_InitAT` (hilo que inicializa Vox): `vm->GetEnv(&env, 0x10002)`; `FindClass("android/media/AudioTrack")` + `NewGlobalRef`; IDs: `<init>(IIIIII)V`,
+- `_InitAT` (the thread that initializes Vox): `vm->GetEnv(&env, 0x10002)`; `FindClass("android/media/AudioTrack")` + `NewGlobalRef`; IDs: `<init>(IIIIII)V`,
   static `getMinBufferSize(III)I`, `play/pause/stop/release ()V`, `write([BII)I`, `getPlayState()I`, static `getNativeOutputSampleRate(I)I`.
-  - `rate = AudioTrack.getNativeOutputSampleRate(3 /*STREAM_MUSIC*/)` → **devolver 44100** (el mezclador interno es 44 100 Hz; con otra tasa activa un
-    remuestreador lineal de punto fijo 2.14: paso = `round(44100·16384 / rate)`).
+  - `rate = AudioTrack.getNativeOutputSampleRate(3 /*STREAM_MUSIC*/)` → **return 44100** (the internal mixer runs at 44,100 Hz; any other rate enables a
+    linear 2.14 fixed-point resampler: step = `round(44100·16384 / rate)`).
   - `minBuf = AudioTrack.getMinBufferSize(rate, 0xC /*CHANNEL_OUT_STEREO*/, 2 /*ENCODING_PCM_16BIT*/)` (bytes). `frames = minBuf / 4`;
-    frames por callback = `min(frames, (int)(rate · 0.02322))` (≈1024 a 44.1 kHz). **Devolver ≥ 4096** (p. ej. 8192).
+    frames per callback = `min(frames, (int)(rate · 0.02322))` (≈1024 at 44.1 kHz). **Return ≥ 4096** (e.g. 8192).
   - `pthread_create(UpdateThreadedAT)` + `pthread_mutex_init` + `pthread_cond_init`.
-- `UpdateThreadedAT` (**pthread guest propio**): `AttachCurrentThread`; `PushLocalFrame(2)`; `track = NewObject(AudioTrack, <init>, 3, rate, 0xC, 2,
-  frames*4, 1 /*MODE_STREAM*/)` → `NewGlobalRef`; `CallNonvirtualVoidMethod(play)`; `arr = NewByteArray(frames*4)`; bucle mientras el driver está vivo:
-  si no está suspendido → `DoCallbackAT`; si lo está → `pthread_cond_wait` y `usleep(1)`. Al salir: `stop`, `release`, `DeleteGlobalRef`, `PopLocalFrame`, `DetachCurrentThread`.
-- `DoCallbackAT`: `p = GetPrimitiveArrayCritical(arr, 0)`; bajo el mutex de Vox, `DriverCallbackInterface::_FillBuffer((short*)p, n)` (mezcla **PCM 16-bit
-  con signo, estéreo entrelazado, little-endian**); `ReleasePrimitiveArrayCritical(arr, p, 0)`; `CallNonvirtualIntMethod(track, write, arr, 0, n*4)`;
-  después se auto-regula con `_GetTime()` + `usleep` (duerme si va por delante del reloj). → `write` puede ser **no bloqueante** (encolar en un ring buffer
-  de SDL y devolver `n`), pero es más robusto bloquear cuando la cola supere ~100 ms.
-- `Suspend/Resume` (`Game.nativeVoxSuspend/Resume`) → `pause()`/`play()` y la condición.
+- `UpdateThreadedAT` (**its own guest pthread**): `AttachCurrentThread`; `PushLocalFrame(2)`; `track = NewObject(AudioTrack, <init>, 3, rate, 0xC, 2,
+  frames*4, 1 /*MODE_STREAM*/)` → `NewGlobalRef`; `CallNonvirtualVoidMethod(play)`; `arr = NewByteArray(frames*4)`; loop while the driver is alive:
+  if not suspended → `DoCallbackAT`; if suspended → `pthread_cond_wait` and `usleep(1)`. On exit: `stop`, `release`, `DeleteGlobalRef`, `PopLocalFrame`, `DetachCurrentThread`.
+- `DoCallbackAT`: `p = GetPrimitiveArrayCritical(arr, 0)`; under Vox's mutex, `DriverCallbackInterface::_FillBuffer((short*)p, n)` (mixes **signed 16-bit PCM,
+  interleaved stereo, little-endian**); `ReleasePrimitiveArrayCritical(arr, p, 0)`; `CallNonvirtualIntMethod(track, write, arr, 0, n*4)`;
+  then it self-regulates with `_GetTime()` + `usleep` (sleeps if it is ahead of the clock). → `write` may be **non-blocking** (queue into an SDL ring buffer
+  and return `n`), but blocking once the queue exceeds ~100 ms is more robust.
+- `Suspend/Resume` (`Game.nativeVoxSuspend/Resume`) → `pause()`/`play()` and the condition variable.
 
-**Opción B: forzar OpenSL** llamando al export `VoxSetAndroidAPILevel(14)` tras `JNI_OnLoad` y antes de la primera `step()`. Entonces `_InitOSL`:
+**Option B: force OpenSL** by calling the export `VoxSetAndroidAPILevel(14)` after `JNI_OnLoad` and before the first `step()`. Then `_InitOSL`:
 
-- `SetDriverSampleRate(44100)`, periodo de callback `0.02322 s`, buffer propio de **4096 bytes** (1024 frames).
+- `SetDriverSampleRate(44100)`, a callback period of `0.02322 s`, its own **4096-byte** buffer (1024 frames).
 - `slCreateEngine(&engineObj, 0, NULL, 0, NULL, NULL)` → `Realize(SL_BOOLEAN_FALSE)` → `GetInterface(SL_IID_ENGINE)` → `CreateOutputMix(&mix, 0, NULL, NULL)`
-  → `Realize` → `CreateAudioPlayer(&player, &src, &sink, 1, {SL_IID_BUFFERQUEUE}, {SL_BOOLEAN_TRUE})` con
-  `SLDataLocator_BufferQueue{ 0x6 /*SL_DATALOCATOR_BUFFERQUEUE*/, numBuffers = 2 }` y
+  → `Realize` → `CreateAudioPlayer(&player, &src, &sink, 1, {SL_IID_BUFFERQUEUE}, {SL_BOOLEAN_TRUE})` with
+  `SLDataLocator_BufferQueue{ 0x6 /*SL_DATALOCATOR_BUFFERQUEUE*/, numBuffers = 2 }` and
   `SLDataFormat_PCM{ formatType 2, numChannels 2, samplesPerSec 44 100 000 mHz, bitsPerSample 16, containerSize 16, channelMask 0x3 (FL|FR), endianness 2 (little) }`
-  → `Realize` → `GetInterface(SL_IID_PLAY)`, `GetInterface(SL_IID_BUFFERQUEUE)` → `RegisterCallback(CallbackOSL, this)` → `DoCallbackOSL()` (ceba la cola)
+  → `Realize` → `GetInterface(SL_IID_PLAY)`, `GetInterface(SL_IID_BUFFERQUEUE)` → `RegisterCallback(CallbackOSL, this)` → `DoCallbackOSL()` (primes the queue)
   → `SetPlayState(SL_PLAYSTATE_PLAYING = 3)`. `Suspend` → `SetPlayState(2)`, `Resume` → `SetPlayState(3)`.
-- `CallbackOSL(bq, ctx)` corre **en el hilo de audio de OpenSL** (en el port: un hilo guest dedicado, nunca el callback de SDL directamente): toma el mutex de
-  Vox y llama `DoCallbackOSL`: `GetState(&st)`; mientras `st.count < 2`: `_FillBuffer(buf, 1024)` + `Enqueue(bq, buf, 4096)`.
-  **Reutiliza el mismo puntero de buffer para los dos `Enqueue` consecutivos → `Enqueue` debe copiar los datos en el momento.**
-- Métodos de vtable usados: `SLObjectItf`: `Realize`(+0), `GetInterface`(+0xc), `Destroy`; `SLEngineItf`: `CreateAudioPlayer`(+8), `CreateOutputMix`(+0x1c);
-  `SLPlayItf`: `SetPlayState`(+0); `SLBufferQueueItf`: `Enqueue`(+0), `Clear`(+4), `GetState`(+8), `RegisterCallback`(+0xc). También existe
-  `RecordCallbackOSL` (micrófono; no usado).
+- `CallbackOSL(bq, ctx)` runs **on OpenSL's audio thread** (in the port: a dedicated guest thread, never SDL's callback directly): it takes Vox's
+  mutex and calls `DoCallbackOSL`: `GetState(&st)`; while `st.count < 2`: `_FillBuffer(buf, 1024)` + `Enqueue(bq, buf, 4096)`.
+  **It reuses the same buffer pointer for two consecutive `Enqueue`s → `Enqueue` must copy the data at that moment.**
+- vtable methods used: `SLObjectItf`: `Realize`(+0), `GetInterface`(+0xc), `Destroy`; `SLEngineItf`: `CreateAudioPlayer`(+8), `CreateOutputMix`(+0x1c);
+  `SLPlayItf`: `SetPlayState`(+0); `SLBufferQueueItf`: `Enqueue`(+0), `Clear`(+4), `GetState`(+8), `RegisterCallback`(+0xc). There is also
+  `RecordCallbackOSL` (microphone; unused).
 
-Formatos de audio de los datos: `.wav` (PCM/IMA-ADPCM/MS-ADPCM), `.mpc` (Musepack SV8, decodificador interno), `.vxn` (formato nativo Vox), Ogg (stb_vorbis
-presente). Todo se decodifica en el `.so`; la HLE solo ve PCM. `VoxThread` crea hilos `glf::Thread` propios para streaming.
+Audio formats in the data: `.wav` (PCM/IMA-ADPCM/MS-ADPCM), `.mpc` (Musepack SV8, internal decoder), `.vxn` (Vox's native format), Ogg (stb_vorbis
+present). Everything is decoded inside the `.so`; the HLE only sees PCM. `VoxThread` creates its own `glf::Thread` threads for streaming.
 
-**Vídeo**: los `.mp4` (`res/raw/logo_hd.mp4`, `intro_hd.mp4`, `moviecomplete_hd.mp4`, `moviecomplete_ld.mp4`) los reproduce **Java**:
-`ZombiesGame::PlayCinematic(name)` → `nativePlayCinematicAndroid` → `Game.playCinematicAndroid(String)` → activity `MyVideoView` (elige `intro` si el
-nombre contiene "intro", si no `moviecomplete`). Mientras dura, la activity `Game` pierde el foco (→ `GL2JNILib.pause()` / `nativeVoxSuspend`) y al volver
-`resume`. **`SUtils.onVideoFinished` nativo es una función vacía**: el nativo no espera ninguna notificación. Stub mínimo: no-op (se salta el vídeo);
-versión completa (T9): pausar, reproducir el mp4 con el host, reanudar. `SUtils.playVideo(String,Z)Z` (vídeo in-game de anuncios) → `false`.
+**Video**: the `.mp4` files (`res/raw/logo_hd.mp4`, `intro_hd.mp4`, `moviecomplete_hd.mp4`, `moviecomplete_ld.mp4`) are played by **Java**:
+`ZombiesGame::PlayCinematic(name)` → `nativePlayCinematicAndroid` → `Game.playCinematicAndroid(String)` → the `MyVideoView` activity (it picks `intro` if the
+name contains "intro", otherwise `moviecomplete`). While it plays, the `Game` activity loses focus (→ `GL2JNILib.pause()` / `nativeVoxSuspend`) and on return
+`resume`. **The native `SUtils.onVideoFinished` is an empty function**: the native code does not wait for any notification. Minimal stub: no-op (skips the video);
+full version (T9): pause, play the mp4 on the host, resume. `SUtils.playVideo(String,Z)Z` (in-game ad video) → `false`.
 
 ---
 
 ## 9. Input
 
-Firmas JNI (todas `static`, `(JNIEnv*, jclass, …)`):
+JNI signatures (all `static`, `(JNIEnv*, jclass, …)`):
 
-| Nativo | Firma | Comportamiento |
+| Native | Signature | Behavior |
 |---|---|---|
-| `Game.nativeOnTouch(int action, int x, int y, int pointerId)` | `(IIII)V` | → `appOnTouch`. `action`: **1 = down, 2 = move, 0 = up**. `x,y` en píxeles del *surface* (origen arriba-izquierda), ya divididos por el factor de escala Java (`Game.a`, 1.0). Los *move* se **limitan por puntero** con `clock()` (umbral según perfil CPU/GPU); down/up pasan siempre. Acaba en `glf::AndroidAddTouchEvent` |
-| `GL2JNILib.touchEvent(int action, int x, int y, int pointerId)` | `(IIII)V` | directo a `glf::AndroidAddTouchEvent` (sin limitador). Java no lo usa |
-| `glf::AndroidAddTouchEvent(action, x, y, id)` | — | `Gamepad::RaiseTouchEvent(pad0, 0, type, id, (float)x, (float)y, true)` con `type` = `0xd6` (down), `0xd7` (move), `0xd8` (up) |
-| `GameGLSurfaceView.nativeOnTouch` | `(IIII)V` | idéntico a `Game.nativeOnTouch` (vista antigua) |
-| `Game.nativeOnKeyDown(int keyCode)` | `(I)V` | → `appOnKeyDown` = **función vacía** |
+| `Game.nativeOnTouch(int action, int x, int y, int pointerId)` | `(IIII)V` | → `appOnTouch`. `action`: **1 = down, 2 = move, 0 = up**. `x,y` in *surface* pixels (top-left origin), already divided by the Java scale factor (`Game.a`, 1.0). *Move* events are **throttled per pointer** with `clock()` (threshold by CPU/GPU profile); down/up always pass. Ends in `glf::AndroidAddTouchEvent` |
+| `GL2JNILib.touchEvent(int action, int x, int y, int pointerId)` | `(IIII)V` | straight to `glf::AndroidAddTouchEvent` (no throttling). Java does not use it |
+| `glf::AndroidAddTouchEvent(action, x, y, id)` | — | `Gamepad::RaiseTouchEvent(pad0, 0, type, id, (float)x, (float)y, true)` with `type` = `0xd6` (down), `0xd7` (move), `0xd8` (up) |
+| `GameGLSurfaceView.nativeOnTouch` | `(IIII)V` | identical to `Game.nativeOnTouch` (old view) |
+| `Game.nativeOnKeyDown(int keyCode)` | `(I)V` | → `appOnKeyDown` = **an empty function** |
 | `Game.nativeOnKeyUp(int keyCode)` | `(I)V` | → `Application::OnAndroidKeyEvent(false, keyCode)` |
 | `Game.nativeAccelerator(float x, float y, float z)` | `(FFF)V` | `appOnAccelerator` |
 | `Game.nativeOrientation(float, float, float)` | `(FFF)V` | `appOnOrientation` |
 | `GL2JNILib.accelerometerEvent(float, float, float)` | `(FFF)V` | `Gamepad::RaiseAccelerometerEvent` |
-| `GL2JNILib.orientationChanged(int)` | `(I)V` | `glf::AndroidOrientationChanged` → evento `type 100` (2/3 → `SetOrientation`) |
-| `Game.nativeXperiaToggleJoysticks(int)` | `(I)V` | `Application::XperiaToggleJoysticks`: solo cambia frames del HUD Flash (muestra/oculta sticks virtuales) |
-| `Game.processTouchpadAsPointer(ViewParent, boolean)` | `(Landroid/view/ViewParent;Z)Z` | llama por JNI a `android.view.ViewRoot.setProcessPositionEvents(Z)V` (API oculta de Xperia Play). **No llamar** |
-| `Game.nativeCanInterrupt()` | `()I` | lee un flag global | 
+| `GL2JNILib.orientationChanged(int)` | `(I)V` | `glf::AndroidOrientationChanged` → event `type 100` (2/3 → `SetOrientation`) |
+| `Game.nativeXperiaToggleJoysticks(int)` | `(I)V` | `Application::XperiaToggleJoysticks`: only changes Flash HUD frames (shows/hides the virtual sticks) |
+| `Game.processTouchpadAsPointer(ViewParent, boolean)` | `(Landroid/view/ViewParent;Z)Z` | calls `android.view.ViewRoot.setProcessPositionEvents(Z)V` via JNI (a hidden Xperia Play API). **Do not call** |
+| `Game.nativeCanInterrupt()` | `()I` | reads a global flag |
 | `Game.nativeCanAutoOrientate()` | `()Z` | flag |
 
-- **Multitouch**: `pointerId` 0..n del `MotionEvent`. Java, en dispositivos normales, envía: `ACTION_DOWN` → `(1,x,y,0)`; `POINTER_DOWN` → `(1,x,y,idx)`;
-  `MOVE` → `(2,x,y,id)` por cada puntero; `POINTER_UP` → `(0,x,y,idx)`; `ACTION_UP` → `(0,x,y,0)` **y** `(0,x,y,1)`. El juego es un *twin-stick shooter*:
-  stick izquierdo (mover) y derecho (apuntar/disparar) son zonas táctiles del HUD Flash.
-- **Teclas** (`Application::OnAndroidKeyEvent`, solo *key up*): si el juego está en estado "bloqueado" (flag `+4`) solo atiende **`KEYCODE_BACK (4)`** →
-  `nativeExit()` o `nativeSendAppBackground()`; en estado normal → `CKeyManager::OnEvent(keyCode)`, que reconoce **`4` (BACK: navegación atrás/pausa, 38
-  comparaciones)**, **`82` (MENU)**, y de forma puntual `0x1c`, `0x67`, `0x6c`, `0x130`, `0x136`, `0x137` (botones físicos de Xperia Play / códigos evdev)
-  [I: significado exacto de estos últimos no confirmado]. Java filtra `VOLUME_UP/DOWN (24/25)` y `CAMERA (27)`.
-- **Gamepad**: **no hay soporte nativo de mando**. `glf::Gamepad::RaiseButtonEvent` y `RaiseAnalogicStickEvent` existen pero **no tienen llamadores**; el
-  único "mando" es el Xperia Play, cuyo *touchpad* Java convierte en toques con `pointerId` **60** (stick izq.) y **61** (stick der.) en coordenadas
-  re-mapeadas (`x·82/360 + 70 [+480]`, `427 − y·82/360 [+5]`, es decir, sobre un HUD de 854×480).
-  → **T8 debe implementar teclado/ratón/mando como toques virtuales**: ratón = puntero 0; WASD/stick izq. = puntero sintético que hace down en el centro
-  del stick virtual izquierdo y move proporcional; stick der./ratón = segundo puntero sobre el stick derecho; `Esc` = `nativeOnKeyUp(4)`. Las posiciones
-  exactas de los sticks en el HUD hay que medirlas en ejecución [NC].
+- **Multitouch**: `pointerId` 0..n from the `MotionEvent`. On normal devices Java sends: `ACTION_DOWN` → `(1,x,y,0)`; `POINTER_DOWN` → `(1,x,y,idx)`;
+  `MOVE` → `(2,x,y,id)` for each pointer; `POINTER_UP` → `(0,x,y,idx)`; `ACTION_UP` → `(0,x,y,0)` **and** `(0,x,y,1)`. The game is a *twin-stick shooter*:
+  the left stick (move) and right stick (aim/shoot) are touch zones of the Flash HUD.
+- **Keys** (`Application::OnAndroidKeyEvent`, *key up* only): if the game is in a "locked" state (flag `+4`) it only handles **`KEYCODE_BACK (4)`** →
+  `nativeExit()` or `nativeSendAppBackground()`; in the normal state → `CKeyManager::OnEvent(keyCode)`, which recognizes **`4` (BACK: back navigation/pause, 38
+  comparisons)**, **`82` (MENU)**, and occasionally `0x1c`, `0x67`, `0x6c`, `0x130`, `0x136`, `0x137` (Xperia Play physical buttons / evdev codes)
+  [I: the exact meaning of the latter is not confirmed]. Java filters out `VOLUME_UP/DOWN (24/25)` and `CAMERA (27)`.
+- **Gamepad**: **there is no native gamepad support**. `glf::Gamepad::RaiseButtonEvent` and `RaiseAnalogicStickEvent` exist but **have no callers**; the
+  only "gamepad" is the Xperia Play, whose *touchpad* Java converts into touches with `pointerId` **60** (left stick) and **61** (right stick) at
+  remapped coordinates (`x·82/360 + 70 [+480]`, `427 − y·82/360 [+5]`, i.e. on an 854×480 HUD).
+  → **T8 must implement keyboard/mouse/gamepad as virtual touches**: mouse = pointer 0; WASD/left stick = a synthetic pointer that goes down at the center
+  of the left virtual stick and moves proportionally; right stick/mouse = a second pointer on the right stick; `Esc` = `nativeOnKeyUp(4)`. The exact positions
+  of the sticks on the HUD have to be measured at runtime [NC].
 
 ---
 
-## 10. Hilos
+## 10. Threads
 
-`pthread_create` tiene 4 sitios de llamada:
+`pthread_create` has 4 call sites:
 
-| Sitio | Quién lo usa | Propósito |
+| Site | Who uses it | Purpose |
 |---|---|---|
-| `glf::Thread::Start(Runnable&, int prio)` | `glf::FileStreamImpl::ReadASync` (lecturas asíncronas con `pread`), `glitch::task::CCpuTaskHandler::init(n, …)` (pool de tareas del motor: carga de recursos/animación), `vox::VoxThread` (mezcla/streaming de Vox, nombre `"VoxThread"`) | atributos: `detachstate = JOINABLE (0)`, **`stacksize = 0x10000` (64 KB)**; rutina `glf::Thread::Impl::RunThread` → `Thread::MyRun`. Al arrancar cada hilo: `ThreadMgr::OnStartThread` (copia nodos TLS con `pthread_setspecific`) y los *start handlers* registrados, entre ellos `glf::AndroidOnStartThread` (`GetEnv` + `AttachCurrentThread` + `android.os.Process.setThreadPriority`). Al salir: `AndroidOnExitThread` (`DetachCurrentThread`) |
-| `vox::DriverAndroid::_InitAT` | driver de audio AudioTrack | hilo `UpdateThreadedAT` (§8). Solo en opción A |
-| `glwebtools::Thread::Start(Priority)` | `GlWebToolsCore::Initialize`, `JobRunner::Start`, `gaia::Gaia::Initialize`, `gaia::ThreadManager::Update`, `AnubisLib::AnubisManager::Initialize`, `CHeatUpManager` | HTTP/servicios online (curl). Con red cortada quedan ociosos o no se crean |
-| `CTransportManagerImpl::StartReceiverThread` | multijugador | no se alcanza sin red [I] |
+| `glf::Thread::Start(Runnable&, int prio)` | `glf::FileStreamImpl::ReadASync` (asynchronous reads with `pread`), `glitch::task::CCpuTaskHandler::init(n, …)` (the engine's task pool: resource loading/animation), `vox::VoxThread` (Vox mixing/streaming, named `"VoxThread"`) | attributes: `detachstate = JOINABLE (0)`, **`stacksize = 0x10000` (64 KB)**; routine `glf::Thread::Impl::RunThread` → `Thread::MyRun`. When each thread starts: `ThreadMgr::OnStartThread` (copies TLS nodes with `pthread_setspecific`) and the registered *start handlers*, including `glf::AndroidOnStartThread` (`GetEnv` + `AttachCurrentThread` + `android.os.Process.setThreadPriority`). On exit: `AndroidOnExitThread` (`DetachCurrentThread`) |
+| `vox::DriverAndroid::_InitAT` | the AudioTrack audio driver | the `UpdateThreadedAT` thread (§8). Option A only |
+| `glwebtools::Thread::Start(Priority)` | `GlWebToolsCore::Initialize`, `JobRunner::Start`, `gaia::Gaia::Initialize`, `gaia::ThreadManager::Update`, `AnubisLib::AnubisManager::Initialize`, `CHeatUpManager` | HTTP/online services (curl). With the network cut they stay idle or are never created |
+| `CTransportManagerImpl::StartReceiverThread` | multiplayer | not reached without a network [I] |
 
-Hilos "externos" que entran en código guest: el hilo **UI** (init, input, pausa) y el hilo **GL** (todo lo demás). En el port pueden ser el mismo hilo host
-siempre que se respete el orden de §4; `glf` identifica el hilo principal con `pthread_self()` en `App::SetAsMainThread` (llamado desde `resize`), así que
-**`step`, `resize`, `stateChanged` y `getViewSettings` deben ejecutarse en el mismo hilo guest**. El input (`nativeOnTouch`) llega en Android desde el hilo UI
-mientras `step` corre en el GL: las colas de eventos de `glf` están protegidas [I], pero lo más seguro es inyectar el input entre frames desde el hilo GL.
+"External" threads entering guest code: the **UI** thread (init, input, pause) and the **GL** thread (everything else). In the port they can be the same host thread
+as long as the order in §4 is respected; `glf` identifies the main thread with `pthread_self()` in `App::SetAsMainThread` (called from `resize`), so
+**`step`, `resize`, `stateChanged` and `getViewSettings` must run on the same guest thread**. On Android, input (`nativeOnTouch`) arrives from the UI thread
+while `step` runs on the GL thread: `glf`'s event queues are protected [I], but the safest choice is to inject input between frames from the GL thread.
 
-Sincronización usada:
+Synchronization used:
 
-- `pthread_mutex_*` (11 `init`, 47 `lock`, 49 `unlock`, 2 `trylock`) con `pthread_mutexattr_settype` → **recursivos** (`glf::Mutex`, `vox::Mutex`,
-  `glwebtools::Mutex`); `pthread_cond_*` (`wait`, `timedwait`, `signal`, `broadcast`) en `glf::Condition` y en el driver de audio; `pthread_once` (1);
-  `pthread_join` (4 sitios); `sched_yield`, `usleep`.
-- **`glf::SpinLock`** y los contadores de referencias usan **`ldrex/strex`** → el JIT necesita monitor exclusivo global entre hilos guest (dynarmic
-  `ExclusiveMonitor`); si T3 serializa los hilos guest con un *big lock*, debe soltarlo en las llamadas bloqueantes (`pthread_cond_wait`, `usleep`,
-  `AudioTrack.write`, E/S) o habrá interbloqueos con `SpinLock`.
-- `__cxa_guard_acquire/release` (530 sitios): inicialización perezosa de estáticos locales desde varios hilos → implementación con exclusión real.
-- TLS: `pthread_key_create` en `AndroidOS_GetEnv` (con destructor que hace `DetachCurrentThread`), `glf::ThreadMgr::Init` y `__cxa_get_globals`.
-  `glf::Thread::GetSequentialThreadId()` asigna índices pequeños por hilo (arrays de tamaño fijo, 16 handlers/hilos) → no crear hilos guest extra innecesarios.
-- Las pilas de 64 KB que pide `glf` son escasas para un JIT con *fastmem* pero es lo que usa el original; el host puede reservar más sin efectos.
+- `pthread_mutex_*` (11 `init`, 47 `lock`, 49 `unlock`, 2 `trylock`) with `pthread_mutexattr_settype` → **recursive** (`glf::Mutex`, `vox::Mutex`,
+  `glwebtools::Mutex`); `pthread_cond_*` (`wait`, `timedwait`, `signal`, `broadcast`) in `glf::Condition` and in the audio driver; `pthread_once` (1);
+  `pthread_join` (4 sites); `sched_yield`, `usleep`.
+- **`glf::SpinLock`** and the reference counters use **`ldrex/strex`** → the JIT needs a global exclusive monitor across guest threads (dynarmic's
+  `ExclusiveMonitor`); if T3 serializes guest threads with a *big lock*, it must release it on blocking calls (`pthread_cond_wait`, `usleep`,
+  `AudioTrack.write`, I/O) or there will be deadlocks with `SpinLock`.
+- `__cxa_guard_acquire/release` (530 sites): lazy initialization of local statics from several threads → an implementation with real mutual exclusion.
+- TLS: `pthread_key_create` in `AndroidOS_GetEnv` (with a destructor that calls `DetachCurrentThread`), `glf::ThreadMgr::Init` and `__cxa_get_globals`.
+  `glf::Thread::GetSequentialThreadId()` assigns small per-thread indices (fixed-size arrays, 16 handlers/threads) → do not create unnecessary extra guest threads.
+- The 64 KB stacks `glf` asks for are tight for a JIT with *fastmem*, but that is what the original uses; the host can reserve more with no side effects.
 
 ---
 
-## 11. Red, DRM, IAP y social
+## 11. Network, DRM, IAP and social
 
-Los servidores de Gameloft ya no existen; todo debe responder "sin conexión". Puntos de corte, por capa:
+Gameloft's servers no longer exist; everything must answer "offline". Cut-off points, by layer:
 
-1. **Java (T7)**: `Game.isWifiEnabled()` → 0 (→ `ZombiesGame::SetInternet(false)` en `appInit`, `appResume` y periódicamente en `appUpdate`);
-   `PortingJNI.hasConnectivity()` → false (GLOT/tracking no intenta enviar); `SUtils.initCheckConnectionType()` → 0; **no llamar** a
-   `NetworkStateReceiver.setConnectionType` ni a `Game.nativeConnectionLoss`; `C2DMAndroidUtils.HasPushNotification()` → 0; `IsLoggedIn()` → false en
+1. **Java (T7)**: `Game.isWifiEnabled()` → 0 (→ `ZombiesGame::SetInternet(false)` in `appInit`, `appResume` and periodically in `appUpdate`);
+   `PortingJNI.hasConnectivity()` → false (GLOT/tracking does not try to send); `SUtils.initCheckConnectionType()` → 0; **do not call**
+   `NetworkStateReceiver.setConnectionType` or `Game.nativeConnectionLoss`; `C2DMAndroidUtils.HasPushNotification()` → 0; `IsLoggedIn()` → false in
    Facebook/GameAPI; `GetDataFromURL` → null; `getHttpResponse`/`openBrowser` → no-op.
 2. **libc (T4)**: `socket()` → −1 (`errno = EACCES`), `getaddrinfo` → `EAI_NONAME`, `gethostbyname` → NULL, `connect/send/recv` → −1,
-   `select/poll` sin descriptores → dormir el *timeout* y devolver 0 (hay 18 sitios de `select`; **no** devolver inmediatamente o algún hilo girará en vacío).
-   curl/glwebtools/CSocket/AnubisLib/`glf::debugger` fallan limpiamente al no poder crear el socket.
-3. **DRM / instalador**: `GameInstaller.initNative/nativeStart/nativeGetDevID/getPublicKey` y `GDRMPolicy.*` solo los invoca la activity Java
-   `GameInstaller` (licencia Google + descarga de datos). El juego (`Game` → `GL2JNILib`) no depende de ellos: **no llamarlos**. `nativeStart` solo hace
-   `CallStaticVoidMethod(GameInstaller.startGame)`. [NC: no se ha buscado exhaustivamente una comprobación tardía de licencia dentro del juego; no hay
-   cadenas ni llamadas que lo sugieran fuera de `installer_*`.]
-4. **IAP**: `InAppBilling.*` (5 nativos + clase ofuscada `iab/s` con `bq/gk/gn/in/rn`) solo responde a callbacks Java de compra. Sin llamadas Java no
-   hace nada. La tienda del juego mostrará ítems de dinero real sin precio; `Game.nativeAddCash(int, String)` es el nativo que acredita moneda (útil para
-   un menú de trucos en T9).
-5. **Social/Push/Ads/GLLive/Welcome screen/IGP**: todo va por métodos Java `void` (no-op) o getters (`""`/0/false), ver §5.
-6. **Tracking (GLOT)** escribe ficheros locales (`tracker*.dat`, `error_events.dat`…) en la carpeta de save: dejarlo funcionar.
+   `select/poll` with no descriptors → sleep for the *timeout* and return 0 (there are 18 `select` sites; do **not** return immediately or some thread will spin).
+   curl/glwebtools/CSocket/AnubisLib/`glf::debugger` fail cleanly when they cannot create the socket.
+3. **DRM / installer**: `GameInstaller.initNative/nativeStart/nativeGetDevID/getPublicKey` and `GDRMPolicy.*` are only invoked by the Java
+   `GameInstaller` activity (Google license + data download). The game (`Game` → `GL2JNILib`) does not depend on them: **do not call them**. `nativeStart` only does
+   `CallStaticVoidMethod(GameInstaller.startGame)`. [NC: a late license check inside the game has not been searched for exhaustively; there are no
+   strings or calls suggesting one outside `installer_*`.]
+4. **IAP**: `InAppBilling.*` (5 natives + the obfuscated class `iab/s` with `bq/gk/gn/in/rn`) only responds to Java purchase callbacks. Without Java calls it
+   does nothing. The in-game shop will show real-money items without a price; `Game.nativeAddCash(int, String)` is the native that credits currency (useful for
+   a cheat menu in T9).
+5. **Social/Push/Ads/GLLive/Welcome screen/IGP**: everything goes through `void` Java methods (no-op) or getters (`""`/0/false), see §5.
+6. **Tracking (GLOT)** writes local files (`tracker*.dat`, `error_events.dat`…) into the save folder: let it work.
 
-Riesgo: pantallas que **esperan** respuesta de red (login GLLive, `GameServerConfig.json`, multijugador "Arena", *cloud save*) podrían quedarse esperando un
-*timeout* de curl en vez de fallar al instante; con `socket()` fallando el error es inmediato [I]. El modo historia es offline [I].
+Risk: screens that **wait** for a network response (GLLive login, `GameServerConfig.json`, "Arena" multiplayer, *cloud save*) might wait for a curl
+*timeout* instead of failing instantly; with `socket()` failing the error is immediate [I]. Story mode is offline [I].
 
 ---
 
-## 12. Riesgos y recomendaciones
+## 12. Risks and recommendations
 
-### Generales
+### General
 
-| # | Riesgo | Recomendación |
+| # | Risk | Recommendation |
 |---|---|---|
-| R1 | Imports referenciados **por dirección** (`R_ARM_ABS32`/`GLOB_DAT` de `malloc`, `free`, `fread`, `strcmp`, `__cxa_pure_virtual`…) | T3: cada import = thunk en memoria guest (p. ej. `svc #n; bx lr` en ARM, o dirección trampa reconocida por el JIT); PLT/GOT y relocaciones de datos apuntan al mismo thunk |
-| R2 | Interworking: PLT ARM, código Thumb-2, veneers `bx pc`, callbacks con bit 0 | Respetar el bit 0 en todas las entradas host→guest (`.init_array`, `Java_*`, start routines, comparadores) |
-| R3 | `ldrex/strex` masivo con hilos reales | Monitor exclusivo compartido; validar pronto con el pool de tareas de Glitch y Vox |
-| R4 | `FILE` con campos leídos inline (`_file` @14, `_flags` @12) y `pread` sobre ese fd | T4: `FILE` bionic real en memoria guest + tabla de fds propia; `pread` thread-safe |
-| R5 | Excepciones C++ dependen de `__gnu_Unwind_Find_exidx` y de que el JIT permita al unwinder leer/restaurar registros (corre como código guest normal) | Implementar el import (§1); no requiere soporte especial del JIT |
-| R6 | `setjmp/longjmp` guest | Implementarlos sobre el contexto del CPU emulado (o como rutinas en ensamblador guest inyectadas) |
-| R7 | 552 constructores estáticos antes de `JNI_OnLoad` | HLE de libc/pthread completa antes de `.init_array`; log por constructor para depurar |
-| R8 | El nativo llama a Java **dentro** de `GL2JNILib.init` (`createView`) y de `Game.nativeInit` (getters) | El JNI falso debe ser reentrante (host→guest→host→guest) |
-| R9 | `AndroidOS::Init` hace `exit()` si no encuentra `SUtils`/`Device`/`GameInstaller` | `FindClass` debe devolver siempre un `jclass` no nulo (clase genérica "desconocida") y `GetStaticMethodID` un ID no nulo |
-| R10 | Perfil gráfico/CPU decidido por cadenas (`GL_RENDERER`, modelo, nº de núcleos, `MemTotal`) | Presentarse como gama alta: `nativeSetGPUInfo("Adreno (TM) 330")`, 4 núcleos, 2 GB. (`GetGPUProfile`: `adreno` < 220 → 0; `powervr sgx` < 541 → 0; `nvidia ap` → 0; `nvidia tegra` → 1; resto → 2) |
+| R1 | Imports referenced **by address** (`R_ARM_ABS32`/`GLOB_DAT` of `malloc`, `free`, `fread`, `strcmp`, `__cxa_pure_virtual`…) | T3: each import = a thunk in guest memory (e.g. `svc #n; bx lr` in ARM, or a trap address the JIT recognizes); the PLT/GOT and data relocations point to the same thunk |
+| R2 | Interworking: ARM PLT, Thumb-2 code, `bx pc` veneers, callbacks with bit 0 | Respect bit 0 on every host→guest entry (`.init_array`, `Java_*`, start routines, comparators) |
+| R3 | Massive `ldrex/strex` use with real threads | A shared exclusive monitor; validate early with Glitch's task pool and Vox |
+| R4 | `FILE` with fields read inline (`_file` @14, `_flags` @12) and `pread` on that fd | T4: a real bionic `FILE` in guest memory + its own fd table; thread-safe `pread` |
+| R5 | C++ exceptions depend on `__gnu_Unwind_Find_exidx` and on the JIT letting the unwinder read/restore registers (it runs as normal guest code) | Implement the import (§1); no special JIT support needed |
+| R6 | Guest `setjmp/longjmp` | Implement them on the emulated CPU context (or as injected guest assembly routines) |
+| R7 | 552 static constructors before `JNI_OnLoad` | A complete libc/pthread HLE before `.init_array`; a per-constructor log for debugging |
+| R8 | The native code calls Java **inside** `GL2JNILib.init` (`createView`) and `Game.nativeInit` (getters) | The fake JNI must be reentrant (host→guest→host→guest) |
+| R9 | `AndroidOS::Init` calls `exit()` if it does not find `SUtils`/`Device`/`GameInstaller` | `FindClass` must always return a non-null `jclass` (a generic "unknown" class) and `GetStaticMethodID` a non-null ID |
+| R10 | The graphics/CPU profile is decided by strings (`GL_RENDERER`, model, number of cores, `MemTotal`) | Present as high-end: `nativeSetGPUInfo("Adreno (TM) 330")`, 4 cores, 2 GB. (`GetGPUProfile`: `adreno` < 220 → 0; `powervr sgx` < 541 → 0; `nvidia ap` → 0; `nvidia tegra` → 1; everything else → 2) |
 
-### Por tarea
+### Per task
 
-- **T3 (loader/CPU)**: reservar `0xd30000`; aplicar los 4 tipos de relocación; resolver todos los `JUMP_SLOT` en carga; `e_entry = 0`; ejecutar
-  `.init_array` (552) y luego `JNI_OnLoad`. dynarmic A32 con Thumb-2, VFPv3 (D16 basta), IT blocks, `tbb/tbh`, exclusivos. CP15 no se usa (devolver 0 a
-  cualquier `mrc`). Callbacks host→guest reentrantes y por hilo. Tamaños de pila: principal ≥ 1 MB; hilos `glf` piden 64 KB (dar ≥ 256 KB).
-  Exportar a los demás módulos la resolución de símbolos por nombre (hay 35 581; útil para `VoxSetAndroidAPILevel`, `Game_nativeAddCash`, depuración).
-- **T4 (libc)**: prioridades por frecuencia: `memcpy/memset/memmove/memcmp/strlen/strcmp` (nativos sobre punteros host), `sprintf/snprintf/sscanf`
-  (formateo propio con varargs guest), `malloc/free` (heap guest propio, alineado a 8; ojo `strdup`), stdio con `FILE` bionic (§3), `stat`/dirent bionic,
-  pthread con tablas laterales (mutex/cond de 4 bytes), `gettimeofday/clock/clock_gettime` monotónicos, `lrand48` exacto, tablas `_ctype_`/`_tolower_tab_`/
-  `_toupper_tab_`, `setlocale` → `"C"`, `wchar_t` de 32 bits (¡en Windows `wchar_t` es de 16!: no delegar en la CRT). Red: todo a fallo (§11).
-  Traducción de rutas (§6.1) y `/proc/meminfo` sintético.
-- **T5 (GLES→ANGLE)**: contexto ES 2.0 único; cadenas `glGetString` sintetizadas y lista blanca de extensiones (§7); ETC1 obligatorio (nativo de ANGLE o
-  decodificado en el thunk); traducción de punteros en ~25 funciones; `glMapBufferOES` con *shadow* o sin anunciar; stubs con error para las `3DOES`.
-  El *swap* lo hace el frontend tras cada `step()`.
-- **T6 (audio)**: implementar **AudioTrack falso** (opción A) con cola SDL a 44 100 Hz/S16/estéreo; `getMinBufferSize` = 8192; `write` copia y, si la cola
-  supera ~100 ms, bloquea. OpenSL (opción B) solo como alternativa: 4 símbolos + vtables guest, `Enqueue` con copia inmediata, callback en hilo guest.
-  Los 4 imports de OpenSL deben existir en cualquier caso (se resuelven en carga).
-- **T7 (JNI)**: `JNIEnv`/`JavaVM` como vtables en memoria guest con thunks; familias `Call*Method` variádica **y** `V`; referencias como *handles* de 32
-  bits; `String` UTF-8 (`NewStringUTF`/`GetStringUTFChars`), `byte[]`/`int[]`/`String[]`, `Bundle` (mapa), `AudioTrack`. Tolerar clases/IDs desconocidos
-  (devolver 0/`""`/no-op y **registrar** `clase.método+firma` la primera vez: es la mejor herramienta para descubrir llamadas no listadas aquí).
-  Tabla de stubs: §5. Secuencia: §4.
-- **T8 (integración/input)**: bucle = `step()` + swap a 30–60 fps (el juego mide tiempo real con `gettimeofday`; [NC] si asume *vsync* a 60 o limita a 30);
-  input como toques virtuales (§9); `Esc` → `nativeOnKeyUp(4)`; pérdida de foco → `GL2JNILib.pause()` + `nativeVoxSuspend()`, recuperación → `resume()` +
-  `nativeVoxResume()`; resize → `glViewport` + `GL2JNILib.resize(w,h)` (y `GameRenderer.nativeInit` debe haberse llamado con el tamaño inicial).
-  Resolución lógica: el HUD Flash está diseñado para 16:9 (854×480 de referencia en el mapeo Xperia).
-- **T9 (instalador)**: entrada del usuario = este APK *repack* (`assets/game.apk` con el APK original, `assets/archiveObbCache.zip.001–005` = ZIP partido
-  con los OBB, `lib/armeabi-v7a/libZombieWood.so`) **o** APK original + OBB sueltos. Salida: `libZombieWood.so`, los dos `.obb` sin tocar, y
-  `res/raw/*.mp4` si se quiere vídeo. `libgenerator.so` es del *wrapper* (`com.dataManager`), no del juego: ignorarlo.
+- **T3 (loader/CPU)**: reserve `0xd30000`; apply the 4 relocation types; resolve every `JUMP_SLOT` at load time; `e_entry = 0`; run
+  `.init_array` (552) and then `JNI_OnLoad`. dynarmic A32 with Thumb-2, VFPv3 (D16 is enough), IT blocks, `tbb/tbh`, exclusives. CP15 is unused (return 0 for
+  any `mrc`). Reentrant, per-thread host→guest callbacks. Stack sizes: main ≥ 1 MB; `glf` threads ask for 64 KB (give ≥ 256 KB).
+  Export symbol-by-name resolution to the other modules (there are 35,581; useful for `VoxSetAndroidAPILevel`, `Game_nativeAddCash`, debugging).
+- **T4 (libc)**: priorities by frequency: `memcpy/memset/memmove/memcmp/strlen/strcmp` (native on host pointers), `sprintf/snprintf/sscanf`
+  (our own formatting with guest varargs), `malloc/free` (our own guest heap, 8-aligned; watch `strdup`), stdio with a bionic `FILE` (§3), bionic `stat`/dirent,
+  pthread with side tables (4-byte mutex/cond), monotonic `gettimeofday/clock/clock_gettime`, an exact `lrand48`, the `_ctype_`/`_tolower_tab_`/
+  `_toupper_tab_` tables, `setlocale` → `"C"`, 32-bit `wchar_t` (on Windows `wchar_t` is 16-bit!: do not delegate to the CRT). Network: everything fails (§11).
+  Path translation (§6.1) and a synthetic `/proc/meminfo`.
+- **T5 (GLES→ANGLE)**: a single ES 2.0 context; synthesized `glGetString` strings and an extension allowlist (§7); ETC1 is mandatory (native in ANGLE or
+  decoded in the thunk); pointer translation in ~25 functions; `glMapBufferOES` with a *shadow* or not advertised; error stubs for the `3DOES` ones.
+  The frontend does the *swap* after each `step()`.
+- **T6 (audio)**: implement a **fake AudioTrack** (option A) with an SDL queue at 44,100 Hz/S16/stereo; `getMinBufferSize` = 8192; `write` copies and, if the queue
+  exceeds ~100 ms, blocks. OpenSL (option B) only as an alternative: 4 symbols + guest vtables, `Enqueue` with an immediate copy, callback on a guest thread.
+  The 4 OpenSL imports must exist in any case (they are resolved at load time).
+- **T7 (JNI)**: `JNIEnv`/`JavaVM` as vtables in guest memory with thunks; the variadic `Call*Method` family **and** the `V` one; references as 32-bit
+  *handles*; UTF-8 `String`s (`NewStringUTF`/`GetStringUTFChars`), `byte[]`/`int[]`/`String[]`, `Bundle` (a map), `AudioTrack`. Tolerate unknown classes/IDs
+  (return 0/`""`/no-op and **log** `class.method+signature` the first time: it is the best tool for discovering calls not listed here).
+  Stub table: §5. Sequence: §4.
+- **T8 (integration/input)**: loop = `step()` + swap at 30–60 fps (the game measures real time with `gettimeofday`; [NC] whether it assumes *vsync* at 60 or caps at 30);
+  input as virtual touches (§9); `Esc` → `nativeOnKeyUp(4)`; focus loss → `GL2JNILib.pause()` + `nativeVoxSuspend()`, recovery → `resume()` +
+  `nativeVoxResume()`; resize → `glViewport` + `GL2JNILib.resize(w,h)` (and `GameRenderer.nativeInit` must have been called with the initial size).
+  Logical resolution: the Flash HUD is designed for 16:9 (854×480 as the reference in the Xperia mapping).
+- **T9 (installer)**: the user's input = this *repack* APK (`assets/game.apk` with the original APK, `assets/archiveObbCache.zip.001–005` = a split ZIP
+  with the OBBs, `lib/armeabi-v7a/libZombieWood.so`) **or** the original APK + loose OBBs. Output: `libZombieWood.so`, the two untouched `.obb` files, and
+  `res/raw/*.mp4` if video is wanted. `libgenerator.so` belongs to the *wrapper* (`com.dataManager`), not the game: ignore it.
 
-### No confirmado (resumen)
+### Not confirmed (summary)
 
-1. Qué comprueba `CheckDiskSpace()` (si falla, `MyInit` aborta el arranque).
-2. Si el motor necesita ficheros sueltos en `sd_folder` además de los OBB montados, y cómo abre los `.bar` anidados (offset vs memoria).
-3. Ramas exactas de `initExtensions`/driver por extensión; ausencia total de decodificador ETC1 software; uso real de `glMapBufferOES` y de arrays en cliente.
-4. Nombres/firmas de los métodos Java de `InAppBilling` (ofuscados en el nativo).
-5. Significado de los keycodes `0x1c, 0x67, 0x6c, 0x130, 0x136, 0x137` en `CKeyManager::OnEvent`; posiciones de los sticks virtuales en el HUD.
-6. Semántica exacta de `ResLoader.getLength/getBytes` cuando el asset no existe y del 2.º directorio de `SetAlternateDataDir`.
-7. Si alguna pantalla del flujo offline bloquea esperando red; *frame pacing* esperado (30 vs 60 fps).
-8. Uso de NEON real (se asume ninguno) y de `getc/putc` inline sobre `FILE` (se asume ninguno).
+1. What `CheckDiskSpace()` checks (if it fails, `MyInit` aborts startup).
+2. Whether the engine needs loose files in `sd_folder` in addition to the mounted OBBs, and how it opens the nested `.bar` files (offset vs memory).
+3. The exact branches of `initExtensions`/the driver per extension; the complete absence of a software ETC1 decoder; real use of `glMapBufferOES` and of client-side arrays.
+4. Names/signatures of the `InAppBilling` Java methods (obfuscated in the native code).
+5. The meaning of keycodes `0x1c, 0x67, 0x6c, 0x130, 0x136, 0x137` in `CKeyManager::OnEvent`; the positions of the virtual sticks on the HUD.
+6. The exact semantics of `ResLoader.getLength/getBytes` when the asset does not exist, and of the 2nd directory of `SetAlternateDataDir`.
+7. Whether any screen in the offline flow blocks waiting for the network; the expected *frame pacing* (30 vs 60 fps).
+8. Real NEON use (assumed none) and inline `getc/putc` on `FILE` (assumed none).
 
 ---
 
-## Apéndice A — Los 88 nativos `Java_*` exportados
+## Appendix A — The 88 exported `Java_*` natives
 
-Prefijo `P = Java_com_gameloft_android_ANMP_GloftZOHM_`, `S = Java_com_gameloft_GLSocialLib_`.
+Prefix `P = Java_com_gameloft_android_ANMP_GloftZOHM_`, `S = Java_com_gameloft_GLSocialLib_`.
 
 - `P GL2JNILib_`: `init`, `initGL`, `getViewSettings`, `getNumExtraContext`, `setNumExtraContext(I)`, `resize(II)`, `step`, `stateChanged(Z)`,
-  `pause`, `resume`, `destroy`, `touchEvent(IIII)`, `accelerometerEvent(FFF)`, `orientationChanged(I)`, `setPaths(String,String,String)` (vacío).
+  `pause`, `resume`, `destroy`, `touchEvent(IIII)`, `accelerometerEvent(FFF)`, `orientationChanged(I)`, `setPaths(String,String,String)` (empty).
 - `P Game_`: `nativeInit`, `nativeOnTouch(IIII)`, `nativeOnKeyDown(I)`, `nativeOnKeyUp(I)`, `nativeAccelerator(FFF)`, `nativeOrientation(FFF)`,
   `nativeSetGPUInfo(String)`, `nativeSetCPUInfo(F)`, `nativeSetPhoneModel(String)`, `nativeSetIMEI(String)`, `nativeGetInfo(String×4)`,
   `nativeVoxMute`, `nativeVoxSuspend`, `nativeVoxResume`, `nativeVoxTutorialIntro`, `nativeAddCash(I,String)`, `nativeCanInterrupt()I`,
@@ -670,7 +671,7 @@ Prefijo `P = Java_com_gameloft_android_ANMP_GloftZOHM_`, `S = Java_com_gameloft_
   `processTouchpadAsPointer(ViewParent,Z)Z`.
 - `P GameRenderer_`: `nativeInit(I,I,I,String)`, `nativeRender`, `nativeResize(II)`, `nativeDestroy`. `P GameGLSurfaceView_`: `nativeOnTouch(IIII)`,
   `nativePause`, `nativeResume`.
-- `P GLUtils_`: `SUtils_nativeInit`, `SUtils_onVideoFinished` (vacío), `Device_nativeInit`, `NetworkStateReceiver_setConnectionType`.
+- `P GLUtils_`: `SUtils_nativeInit`, `SUtils_onVideoFinished` (empty), `Device_nativeInit`, `NetworkStateReceiver_setConnectionType`.
 - `P`: `DataSharing_nativeInit`, `SendInfo_initMethods`, `PushNotification_C2DMAndroidUtils_nativeInit`, `…_nativeCallBack`.
 - `P iab_`: `InAppBilling_nativeInit`, `…_nativeSendData`, `…_nativeSetContext`, `…_nativeSetIABObject`, `s_bq`, `s_gk`, `s_gn`, `s_in`, `s_rn`.
 - `P installer_`: `GameInstaller_initNative`, `…_nativeStart`, `…_nativeGetDevID`, `…_getPublicKey`, `GDRMPolicy_initNativeAP`, `…_nativeAllow`,
@@ -680,21 +681,21 @@ Prefijo `P = Java_com_gameloft_android_ANMP_GloftZOHM_`, `S = Java_com_gameloft_
   nativeGameAPICompleteWithData, nativeGameAPIDidNotComplete, nativeGameAPIDidPlusOneButton}`; `renren_RenrenAndroidGLSocialLib_{nativeInit,
   nativeOnRRDataLoad, nativeOnRRDialogDidComplete, nativeOnRRDialogDidNotComplete, nativeOnRRFailWithError}`.
 
-Otros exports C útiles para el host: `VoxSetAndroidAPILevel(int)`, `VoxSetJavaVM`, `appPause/appResume/appUpdate/appOnTouch`, `nativeExit`, `mJavaVM`.
+Other C exports useful to the host: `VoxSetAndroidAPILevel(int)`, `VoxSetJavaVM`, `appPause/appResume/appUpdate/appOnTouch`, `nativeExit`, `mJavaVM`.
 
-## Apéndice B — Herramientas (`tools/analysis/`)
+## Appendix B — Tools (`tools/analysis/`)
 
-| Script | Qué hace |
+| Script | What it does |
 |---|---|
-| `elf_abi.py <so> [json]` | cabeceras, segmentos, `.ARM.attributes`, `DT_*`, conteo de relocaciones por tipo, `.init_array` |
-| `import_xrefs.py <so> <json>` | por import: stub PLT, slot GOT, nº de llamadas (BL/BLX ARM y Thumb-2 + veneers), relocaciones de datos, funciones llamadoras |
-| `gen_imports.py <xrefs.json> <imports.json>` | genera `docs/imports.json` (firmas y notas mantenidas a mano en el script) |
-| `insn_stats.py <so> [json]` | ARM vs Thumb, clases de instrucción (VFP/NEON/exclusivos/CP15…), mnemónicos FP |
-| `rodata_strings.py <so> [--grep RE]` | cadenas de una sección con su dirección |
-| `disasm_fn.py <so> <símbolo|0xaddr>[,…] [--jni] [--calls-only]` | desensamblado anotado: llamadas por nombre, cadenas/GOT de los idiomas PIC, slots de `JNIEnv` |
-| `scan_all.py <so> <out.txt>` | base de referencias de todo `.text` (llamadas + cadenas + slots JNI por función), para `grep` |
-| `jni_table.py <scan_all.txt>` | funciones que resuelven clases/métodos Java y la secuencia de nombres/firmas |
-| `obb_inspect.py <obb> [--list] [--nested-list N]` | estructura de un OBB y de sus `.bar` anidados |
-| `ghidra/DecompileList.java` | script headless: decompila una lista de funciones sin autoanálisis completo |
+| `elf_abi.py <so> [json]` | headers, segments, `.ARM.attributes`, `DT_*`, relocation counts by type, `.init_array` |
+| `import_xrefs.py <so> <json>` | per import: PLT stub, GOT slot, call count (ARM and Thumb-2 BL/BLX + veneers), data relocations, calling functions |
+| `gen_imports.py <xrefs.json> <imports.json>` | generates `docs/imports.json` (signatures and notes maintained by hand in the script) |
+| `insn_stats.py <so> [json]` | ARM vs Thumb, instruction classes (VFP/NEON/exclusives/CP15…), FP mnemonics |
+| `rodata_strings.py <so> [--grep RE]` | a section's strings with their addresses |
+| `disasm_fn.py <so> <symbol|0xaddr>[,…] [--jni] [--calls-only]` | annotated disassembly: calls by name, strings/GOT for PIC idioms, `JNIEnv` slots |
+| `scan_all.py <so> <out.txt>` | a reference database for all of `.text` (calls + strings + JNI slots per function), for `grep` |
+| `jni_table.py <scan_all.txt>` | functions that resolve Java classes/methods and the sequence of names/signatures |
+| `obb_inspect.py <obb> [--list] [--nested-list N]` | the structure of an OBB and its nested `.bar` files |
+| `ghidra/DecompileList.java` | a headless script: decompiles a list of functions without full auto-analysis |
 
-Las salidas voluminosas (proyectos Ghidra, `scan_all.txt`, JADX) viven en `C:\Users\chdut\ZombiewoodDev\analysis\`, fuera del repo.
+Large outputs (Ghidra projects, `scan_all.txt`, JADX) live in `C:\Users\chdut\ZombiewoodDev\analysis\`, outside the repo.
