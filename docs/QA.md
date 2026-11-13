@@ -61,4 +61,13 @@ Se marca **NO PROBADO** todo lo que no pudo ejercitarse de verdad (no hay nadie 
 ## Paquete
 
 Generado con `pwsh tools\package.ps1 -Clean` (configura con `cmake --preset win-release`, compila, ctest 8/8, monta y
-comprime). Ruta y tamaño: ver el pie de este fichero y el reporte final de T10.
+comprime).
+
+Verificado de extremo a extremo: `-Clean` sobre `win-release-T10` (build desde cero con clones reales, ctest 8/8), repetido
+tras el arreglo B1.
+
+- Zip: `C:\Users\chdut\ZombiewoodDev\dist\Zombiewood-Win64-0.1.0.zip` — **5 294 203 bytes (5.05 MiB)**
+- SHA-256: `5806515AA5071FE5AC392EA64E0A94218523BE88549E4071A55B3F06B55981C6` (también en el `.sha256` contiguo; el hash cambia
+  con cada build)
+- Contenido: `zombiewood.exe` (6.3 MiB), `SDL2.dll`, `libEGL.dll`, `libGLESv2.dll`, `z.dll`, `gamecontrollerdb.txt`, `readme.txt`,
+  `README.md`, `licenses/` (7 ficheros). Sin datos del juego.
