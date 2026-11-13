@@ -1,6 +1,7 @@
 // Integracion (T8): arranque del juego, hilo GL con el bucle step/swap, input y capturas.
 #pragma once
 #include <filesystem>
+#include <vector>
 
 namespace zw {
 
@@ -13,6 +14,11 @@ struct GameOptions {
   bool no_audio = false;          // --no-audio: AudioTrack nulo
   bool uncapped = false;          // --uncapped: sin vsync ni limite de fps (medir rendimiento)
   bool hidden = false;            // --hidden: ventana oculta (pruebas automaticas)
+  // Instalador (T9)
+  std::filesystem::path install_apk;             // --install=<apk>: instalar desde ese APK sin dialogo
+  std::vector<std::filesystem::path> obbs;       // --obb=<fichero.obb> (repetible) para el APK pequeno
+  bool reinstall = false;                        // --reinstall: abrir el asistente aunque haya datos
+  bool install_only = false;                     // --install-only: instalar y salir (sin arrancar el juego)
 };
 
 // Devuelve el codigo de salida del proceso. No vuelve hasta que se cierra la ventana o el juego sale.

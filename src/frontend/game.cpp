@@ -29,7 +29,12 @@
 #include "cpu/cpu.h"
 #include "cpu/hle.h"
 #include "frontend/input.h"
+#include "frontend/menu.h"
 #include "frontend/png.h"
+#include "frontend/saves.h"
+#include "frontend/settings.h"
+#include "frontend/setup.h"
+#include "frontend/video.h"
 #include "frontend/window.h"
 #include "hle/audio/audio_hle.h"
 #include "hle/audio/audio_track.h"
@@ -44,11 +49,12 @@ using Clock = std::chrono::steady_clock;
 
 // ---------------------------------------------------------------------------------- eventos UI -> GL
 struct Ev {
-  enum Type { Key, PadButton, PadAxis, MouseButton, MouseMove, Finger, Drawable, Pause, Resume, Shot, Quit } type;
+  enum Type { Key, PadButton, PadAxis, MouseButton, MouseMove, Finger, Drawable, Pause, Resume, Shot, Quit, ToggleMenu, Fullscreen, Sdl } type;
   int a = 0, b = 0, c = 0, d = 0;
   float f = 0;
+  SDL_Event raw{};  // evento SDL original (para ImGui); raw.type == 0 si no hay
 };
-enum UserCode { kUserMinimize = 1, kUserDone = 2 };
+enum UserCode { kUserMinimize = 1, kUserDone = 2, kUserFullscreen = 3 };
 
 struct Shared {
   std::mutex mu;
@@ -64,10 +70,11 @@ struct Shared {
 Shared g_sh;
 Uint32 g_user_event = 0;
 
-void PostUser(int code) {
+void PostUser(int code, int data = 0) {
   SDL_Event e{};
   e.type = g_user_event;
   e.user.code = code;
+  e.user.data1 = reinterpret_cast<void*>(static_cast<std::intptr_t>(data));
   SDL_PushEvent(&e);
 }
 
@@ -102,61 +109,11 @@ struct SdlTrack final : jni::AudioTrackBackend {
   int PlayState() const override { return t.play_state(); }
 };
 
-struct Settings {
-  std::filesystem::path lib, screens_dir, assets_dir;
-  hle::libc::VfsConfig vfs;
-  int win_w = 1280, win_h = 720;
-  int internal_w = 1280, internal_h = 720;
-  bool follow_window = false;  // resolucion interna = tamano de la ventana (resize al juego)
-  bool vsync = true, fullscreen = false, pause_on_focus_loss = false, linear_filter = true;
-  int fps_limit = 60;
-  int language = 0;
-  nlohmann::json input;
-};
-
-std::filesystem::path PathFrom(const std::string& s, const std::filesystem::path& base) {
-  std::filesystem::path p(std::u8string(s.begin(), s.end()));
-  return p.is_absolute() ? p : base / p;
-}
-
-Settings LoadSettings(const GameOptions& opt) {
-  Settings s;
-  const auto cfg = LoadConfig();
-  const auto home = paths::Home();
-  auto str = [&](const char* k) { return cfg.contains(k) && cfg[k].is_string() ? cfg[k].get<std::string>() : std::string(); };
-  // game_dir: carpeta con lib/libZombieWood.so, obb/*.obb y (opcional) assets del APK.
-  const std::filesystem::path game_dir = str("game_dir").empty() ? home : PathFrom(str("game_dir"), home);
-  s.lib = !opt.lib.empty() ? opt.lib : !str("lib").empty() ? PathFrom(str("lib"), home) : game_dir / "lib" / "libZombieWood.so";
-  s.screens_dir = str("screens_dir").empty() ? home / "screens" : PathFrom(str("screens_dir"), home);
-  s.assets_dir = !str("assets_dir").empty() ? PathFrom(str("assets_dir"), home) : game_dir;
-  s.vfs = hle::libc::DefaultVfsConfig();
-  const bool obb_in_cfg = cfg.contains("vfs") && cfg["vfs"].is_object() && cfg["vfs"].contains("obb_dir");
-  if (!obb_in_cfg) s.vfs.obb_dir = game_dir / "obb";
-  s.win_w = ConfigGet(cfg, "width", 1280);
-  s.win_h = ConfigGet(cfg, "height", 720);
-  s.internal_w = ConfigGet(cfg, "internal_width", 1280);
-  s.internal_h = ConfigGet(cfg, "internal_height", 720);
-  s.follow_window = ConfigGet(cfg, "internal_follows_window", false);
-  s.vsync = ConfigGet(cfg, "vsync", true);
-  s.fullscreen = ConfigGet(cfg, "fullscreen", false);
-  s.fps_limit = ConfigGet(cfg, "fps_limit", 60);
-  s.pause_on_focus_loss = ConfigGet(cfg, "pause_on_focus_loss", false);
-  s.linear_filter = ConfigGet(cfg, "linear_filter", true);
-  s.language = ConfigGet(cfg, "language", 0);
-  if (cfg.contains("input")) s.input = cfg["input"];
-  if (opt.uncapped) {
-    s.vsync = false;
-    s.fps_limit = 0;
-  }
-  s.internal_w = std::clamp(s.internal_w, 320, 4096);
-  s.internal_h = std::clamp(s.internal_h, 240, 4096);
-  return s;
-}
-
 // ---------------------------------------------------------------------------------- hilo GL
 class GlThread {
  public:
-  GlThread(const Settings& s, const GameOptions& opt, Window& win) : s_(s), opt_(opt), win_(win) {}
+  GlThread(const Settings& s, const GameOptions& opt, Window& win, saves::Backup* backup)
+      : s_(s), opt_(opt), win_(win), backup_(backup) {}
 
   void Run() {
     int rc = 0;
@@ -174,6 +131,7 @@ class GlThread {
       rc = 1;
     }
     hle::gles::SetDefaultFramebuffer(0);
+    menu_.Shutdown();
     SDL_GL_MakeCurrent(win_.sdl(), nullptr);
     g_sh.rc = rc;
     g_sh.done = true;
@@ -266,6 +224,7 @@ class GlThread {
       glClear(GL_COLOR_BUFFER_BIT);
       glBlitFramebuffer(0, 0, iw_, ih_, rx_, ry_, rx_ + rw_, ry_ + rh_, GL_COLOR_BUFFER_BIT,
                         s_.linear_filter ? GL_LINEAR : GL_NEAREST);
+      DrawMenu();
       win_.SwapBuffers();
       glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(draw_fb));
       glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(read_fb));
@@ -273,8 +232,115 @@ class GlThread {
       glClearColor(cc[0], cc[1], cc[2], cc[3]);
       if (scissor) glEnable(GL_SCISSOR_TEST);
     } else {
+      DrawMenu();
       win_.SwapBuffers();
     }
+  }
+
+  void DrawMenu() {
+    DrawMenuOnly();
+    for (const auto& n : window_shots_) WindowShot(n);
+    window_shots_.clear();
+  }
+
+  void WindowShot(const std::string& name) {
+    std::error_code ec;
+    std::filesystem::create_directories(s_.screens_dir, ec);
+    std::vector<std::uint8_t> px(static_cast<std::size_t>(dw_) * dh_ * 4);
+    GLint read_fb = 0, pack = 4;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read_fb);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &pack);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, dw_, dh_, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    glPixelStorei(GL_PACK_ALIGNMENT, pack);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(read_fb));
+    const auto path = s_.screens_dir / (name + ".png");
+    if (WritePngRgba(path, px.data(), dw_, dh_, true)) log::Info("captura de ventana: {}", path.string());
+  }
+
+  void DrawMenuOnly() {
+    if (!menu_.Active()) return;
+    MenuStats st;
+    st.fps = g_sh.fps;
+    st.step_ms = g_sh.step_ms;
+    st.frame = frame_;
+    st.internal_w = iw_;
+    st.internal_h = ih_;
+    st.window_w = dw_;
+    st.window_h = dh_;
+    st.paused = paused_;
+    st.renderer = renderer_;
+    menu_.Draw(dw_, dh_, st);
+  }
+
+  // ---- videos (T9) ----
+  // Eventos durante un video: cualquier pulsacion lo salta; Quit sale. Los "up" y demas se conservan para el juego.
+  bool VideoShouldSkip() {
+    bool skip = false;
+    std::lock_guard lk(g_sh.mu);
+    std::vector<Ev> keep;
+    for (const Ev& e : g_sh.queue) {
+      switch (e.type) {
+        case Ev::Quit:
+          quit_ = true;
+          skip = true;
+          keep.push_back(e);
+          break;
+        case Ev::Key:
+        case Ev::PadButton:
+        case Ev::MouseButton:
+          if (e.b) skip = true;
+          else keep.push_back(e);
+          break;
+        case Ev::Finger:
+          if (e.a == 1) skip = true;
+          break;
+        case Ev::MouseMove:
+        case Ev::Sdl:
+        case Ev::PadAxis: break;
+        case Ev::Drawable:
+          dw_ = std::max(1, e.a);
+          dh_ = std::max(1, e.b);
+          if (s_.follow_window || direct_) pending_resize_ = true;
+          UpdateRect();
+          break;
+        default: keep.push_back(e); break;
+      }
+    }
+    g_sh.queue.swap(keep);
+    return skip;
+  }
+
+  // Reproduce res/raw/<file>. Como en Android, el juego queda "en segundo plano" (audio de Vox en pausa).
+  void PlayVideoFile(const std::string& file) {
+    if (s_.skip_videos) {
+      log::Info("video: {} saltado (skip_videos)", file);
+      return;
+    }
+    const bool was_paused = audio::global_paused();
+    audio::set_global_paused(true);
+    video::PlayParams pp;
+    pp.window = win_.sdl();
+    pp.volume = s_.mute ? 0.0f : s_.video_volume;
+    pp.linear_filter = s_.linear_filter;
+    pp.should_skip = [this] { return VideoShouldSkip(); };
+    video::Play(s_.videos_dir / file, pp);
+    audio::set_global_paused(was_paused);
+    next_frame_ = Clock::now();
+  }
+
+  // Game.playCinematicAndroid(nombre): Java lanza MyVideoView con intro_hd.mp4 si el nombre contiene "intro",
+  // si no moviecomplete_hd.mp4 (ANALYSIS §8); al cerrarse llama a SUtils.onVideoFinished.
+  void PlayCinematic(const std::string& name) {
+    std::string lower = name;
+    for (auto& ch : lower) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    std::string file = lower.find("intro") != std::string::npos ? "intro_hd.mp4" : "moviecomplete_hd.mp4";
+    std::error_code ec;
+    if (file == "moviecomplete_hd.mp4" && !std::filesystem::exists(s_.videos_dir / file, ec)) file = "moviecomplete_ld.mp4";
+    log::Info("video: playCinematicAndroid(\"{}\") -> {}", name, file);
+    PlayVideoFile(file);
+    if (jni::FindNative("GLUtils_SUtils_onVideoFinished")) jni::call_native("GLUtils_SUtils_onVideoFinished");
   }
 
   void Screenshot(std::string name) {
@@ -320,6 +386,7 @@ class GlThread {
     if (p == paused_) return;
     paused_ = p;
     if (p) {
+      if (backup_) backup_->Poll();
       mapper_.ReleaseAll(TouchSink());
       log::Info("pausa: GL2JNILib.pause + nativeVoxSuspend");
       jni::call_native("GL2JNILib_pause");
@@ -351,16 +418,51 @@ class GlThread {
     iy = std::clamp(static_cast<int>((my - ry_) * static_cast<double>(ih_) / rh_), 0, ih_ - 1);
   }
 
+  void InitMenu() {
+    MenuActions a;
+    a.apply_vsync = [this] { SDL_GL_SetSwapInterval(s_.vsync ? 1 : 0); };
+    a.set_fullscreen = [](bool on) { PostUser(kUserFullscreen, on ? 1 : 0); };
+    a.apply_resolution = [this] {
+      if (direct_) return;
+      if (s_.follow_window) pending_resize_ = true;
+      else Resize(s_.internal_w, s_.internal_h);
+      UpdateRect();
+    };
+    a.apply_audio = [this] {
+      audio::set_master_volume(s_.volume);
+      audio::set_muted(s_.mute);
+    };
+    a.apply_input = [this] {
+      mapper_.ReleaseAll(TouchSink());
+      mapper_.Configure(s_.input);
+      mapper_.SetScreen(iw_, ih_);
+    };
+    a.set_paused = [this](bool p) { want_pause_ = p; };
+    a.screenshot = [this] { shot_names_.push_back(""); };
+    a.backup_now = [this] {
+      if (backup_) backup_->Snapshot("manual");
+    };
+    a.quit = [this] { quit_ = true; };
+    menu_.Init(win_.sdl(), s_, mapper_, std::move(a));
+  }
+
   void Init() {
     SDL_GL_MakeCurrent(win_.sdl(), win_.gl());
     SDL_GL_SetSwapInterval(s_.vsync ? 1 : 0);
     SDL_GL_GetDrawableSize(win_.sdl(), &dw_, &dh_);
+    if (const auto* r = glGetString(GL_RENDERER)) renderer_ = reinterpret_cast<const char*>(r);
     iw_ = s_.follow_window ? dw_ : s_.internal_w;
     ih_ = s_.follow_window ? dh_ : s_.internal_h;
     CreateFbo();
     UpdateRect();
     mapper_.Configure(s_.input);
     mapper_.SetScreen(iw_, ih_);
+    audio::set_master_volume(s_.volume);
+    audio::set_muted(s_.mute);
+    InitMenu();
+    jni::hooks().play_cinematic = [this](const std::string& n) { PlayCinematic(n); };
+    // Splash de Java (logo de Gameloft) antes de que el juego dibuje nada.
+    if (s_.play_logo && !opt_.hidden) PlayVideoFile("logo_hd.mp4");
     trace_input_ = std::getenv("ZW_TRACE_INPUT") != nullptr;
     if (!opt_.script.empty()) {
       std::ifstream f(opt_.script);
@@ -401,7 +503,11 @@ class GlThread {
       evs.swap(g_sh.queue);
     }
     for (const Ev& e : evs) {
+      if (e.raw.type && menu_.ProcessEvent(e.raw)) continue;  // el menu se queda el evento
       switch (e.type) {
+        case Ev::Sdl: break;
+        case Ev::ToggleMenu: menu_.Toggle(); break;
+        case Ev::Fullscreen: s_.fullscreen = e.a != 0; break;
         case Ev::Key: mapper_.Key(e.a, e.b != 0); break;
         case Ev::PadButton: mapper_.PadButton(e.a, e.b != 0); break;
         case Ev::PadAxis: mapper_.PadAxis(e.a, e.f); break;
@@ -495,6 +601,44 @@ class GlThread {
       std::string name;
       ss >> name;
       shot_names_.push_back(name);
+    } else if (cmd == "menu") {  // menu [graphics|audio|controls|about|none]: muestra la barra / abre una ventana
+      std::string w;
+      ss >> w;
+      if (w.empty()) menu_.Toggle();
+      else menu_.Open(w);
+    } else if (cmd == "remap") {  // remap <destino> [add]: el menu espera la siguiente tecla/boton (ver Menu::StartCapture)
+      std::string t, add;
+      ss >> t >> add;
+      menu_.StartCapture(t, add == "add");
+    } else if (cmd == "ui") {  // ui key <nombre SDL> | ui pad <boton>: evento SDL real (pasa por el hilo UI y el menu)
+      std::string kind, name;
+      ss >> kind;
+      std::getline(ss, name);
+      while (!name.empty() && name[0] == ' ') name.erase(0, 1);
+      SDL_Event e{};
+      if (kind == "key") {
+        e.type = SDL_KEYDOWN;
+        e.key.keysym.scancode = SDL_GetScancodeFromName(name.c_str());
+        e.key.keysym.sym = SDL_GetKeyFromScancode(e.key.keysym.scancode);
+        e.key.state = SDL_PRESSED;
+        SDL_PushEvent(&e);
+        e.type = SDL_KEYUP;
+        e.key.state = SDL_RELEASED;
+        SDL_PushEvent(&e);
+      } else if (kind == "pad") {
+        e.type = SDL_CONTROLLERBUTTONDOWN;
+        e.cbutton.button = static_cast<Uint8>(SDL_GameControllerGetButtonFromString(name.c_str()));
+        e.cbutton.state = SDL_PRESSED;
+        SDL_PushEvent(&e);
+        e.type = SDL_CONTROLLERBUTTONUP;
+        e.cbutton.state = SDL_RELEASED;
+        SDL_PushEvent(&e);
+      }
+    } else if (cmd == "wshot") {  // captura de la VENTANA (con el menu ImGui), no del framebuffer interno
+      std::string name;
+      ss >> name;
+      window_shots_.push_back(name.empty() ? std::format("win_{:06}", frame_) : name);
+      yield_frame_ = true;  // la captura se hace al presentar: no ejecutar mas comandos en este frame
     } else if (cmd == "pause") {
       want_pause_ = true;
     } else if (cmd == "resume") {
@@ -533,7 +677,8 @@ class GlThread {
   void RunCommands() {
     PollControl();
     if (Clock::now() < wait_until_) return;
-    while (!cmds_.empty() && Clock::now() >= wait_until_ && !quit_) {
+    yield_frame_ = false;
+    while (!cmds_.empty() && Clock::now() >= wait_until_ && !quit_ && !yield_frame_) {
       const std::string l = cmds_.front();
       cmds_.pop_front();
       ExecCommand(l);
@@ -551,7 +696,15 @@ class GlThread {
       RunCommands();
       SetPaused(want_pause_);
       if (paused_) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        // Pausado desde el menu (ventana visible): seguir presentando la ultima imagen + menu.
+        if (menu_.Active() && !(SDL_GetWindowFlags(win_.sdl()) & SDL_WINDOW_MINIMIZED)) {
+          for (auto& n : shot_names_) Screenshot(n);
+          shot_names_.clear();
+          Present();
+          std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        } else {
+          std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        }
         continue;
       }
       if (pending_resize_) {
@@ -618,13 +771,21 @@ class GlThread {
       } catch (const GuestExit&) {
       }
     }
+    // El juego guarda al pausar: copia de seguridad de lo que acaba de sobrescribir.
+    if (backup_) {
+      backup_->Poll();
+      backup_->Poll();
+    }
     log::Info("bucle de juego terminado tras {} frames", frame_);
   }
 
-  const Settings& s_;
+  Settings s_;  // copia propia: el menu la edita
   const GameOptions& opt_;
   Window& win_;
+  saves::Backup* backup_ = nullptr;
   input::Mapper mapper_;
+  Menu menu_;
+  std::string renderer_;
   GLuint fbo_ = 0, tex_ = 0, rbo_ = 0;
   bool direct_ = false;
   int iw_ = 1280, ih_ = 720;        // resolucion interna
@@ -636,7 +797,8 @@ class GlThread {
   std::deque<std::string> cmds_;
   Clock::time_point wait_until_{};
   std::streamoff control_off_ = 0;
-  std::vector<std::string> shot_names_;
+  std::vector<std::string> shot_names_, window_shots_;
+  bool yield_frame_ = false;
 };
 
 // ---------------------------------------------------------------------------------- hilo UI
@@ -682,26 +844,59 @@ void ReportUnimplemented() {
 }  // namespace
 
 int RunGame(const GameOptions& opt) {
-  const Settings s = LoadSettings(opt);
+  Settings s = Settings::Load(&opt);
   log::Info("Zombiewood - home: {}", paths::Home().string());
-  log::Info("lib: {}", s.lib.string());
-  log::Info("obb: {}  datos: {}  saves: {}", s.vfs.obb_dir.string(), s.vfs.data_dir.string(), s.vfs.saves_dir.string());
 
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
     log::Error("SDL_Init fallo: {}", SDL_GetError());
     return 1;
   }
   std::error_code ec;
+  g_user_event = SDL_RegisterEvents(1);
+
+  // --- ventana (antes que nada: el asistente de instalacion se dibuja en ella) ---
+  s.ApplyBackendEnv();
+  Window win;
+  if (!win.Create(s.win_w, s.win_h, "Zombiewood", opt.hidden)) {
+    Fatal(std::string("No se pudo crear la ventana / contexto GLES (ANGLE): ") + SDL_GetError());
+    SDL_Quit();
+    return 1;
+  }
+  if (s.fullscreen) SDL_SetWindowFullscreen(win.sdl(), SDL_WINDOW_FULLSCREEN_DESKTOP);
+
+  // --- primer arranque: instalar los datos del APK del usuario ---
+  SetupOptions so;
+  so.install_apk = opt.install_apk;
+  so.obbs = opt.obbs;
+  so.force = opt.reinstall;
+  if (!EnsureGameData(win.sdl(), s, so)) {
+    log::Info("instalacion cancelada o fallida: saliendo");
+    log::Shutdown();
+    std::fflush(nullptr);
+    std::_Exit(0);
+  }
+  if (opt.install_only) {
+    log::Info("--install-only: datos instalados, saliendo");
+    log::Shutdown();
+    std::fflush(nullptr);
+    std::_Exit(0);
+  }
+  log::Info("lib: {}", s.lib.string());
+  log::Info("obb: {}  datos: {}  saves: {}  videos: {}", s.vfs.obb_dir.string(), s.vfs.data_dir.string(), s.vfs.saves_dir.string(),
+            s.videos_dir.string());
   if (!std::filesystem::exists(s.lib, ec)) {
     Fatal("No se encuentra libZombieWood.so en:\n" + s.lib.string() +
-          "\n\nIndica \"game_dir\" (o \"lib\") en zombiewood.json; el juego original no se distribuye con el port.");
+          "\n\nIndica \"game_dir\" (o \"lib\") en zombiewood.json o borra la carpeta data/ para reinstalar desde el APK.");
     return 2;
   }
-  g_user_event = SDL_RegisterEvents(1);
   if (const auto db = paths::Home() / "gamecontrollerdb.txt"; std::filesystem::exists(db, ec)) {
     const int n = SDL_GameControllerAddMappingsFromFile(db.string().c_str());
     log::Info("gamecontrollerdb.txt: {} mapeos", n);
   }
+
+  // Copias de seguridad de la partida (antes de que el juego toque nada).
+  static saves::Backup backup;
+  backup.Start(s.vfs.saves_dir, paths::Home() / "saves_backup", s.backups_keep);
 
   // --- HLE + carga (CONTRACTS §9) ---
   if (!GuestMemory::Init()) {
@@ -733,14 +928,6 @@ int RunGame(const GameOptions& opt) {
   jni::hooks().send_to_background = [] { PostUser(kUserMinimize); };
   jni::hooks().set_current_context = [](int) { return true; };
 
-  // --- ventana (el contexto se crea aqui y se cede al hilo GL) ---
-  Window win;
-  if (!win.Create(s.win_w, s.win_h, "Zombiewood", opt.hidden)) {
-    Fatal(std::string("No se pudo crear la ventana / contexto GLES (ANGLE): ") + SDL_GetError());
-    SDL_Quit();
-    return 1;
-  }
-  if (s.fullscreen) SDL_SetWindowFullscreen(win.sdl(), SDL_WINDOW_FULLSCREEN_DESKTOP);
   if (s.follow_window) {
     int dw, dh;
     SDL_GL_GetDrawableSize(win.sdl(), &dw, &dh);
@@ -787,13 +974,14 @@ int RunGame(const GameOptions& opt) {
   }
   if (!ok) {
     Fatal("El arranque del juego fallo (ver logs/zombiewood.log).");
+    log::Shutdown();
     std::fflush(nullptr);
     std::_Exit(3);
   }
 
   // --- hilo GL ---
   SDL_GL_MakeCurrent(win.sdl(), nullptr);
-  GlThread gl(s, opt, win);
+  GlThread gl(s, opt, win, &backup);
   std::thread gl_thread([&gl] {
     gl.Run();
     threads::DetachCurrent();
@@ -826,6 +1014,10 @@ int RunGame(const GameOptions& opt) {
     return static_cast<int>(fingers.size() - 1);
   };
   bool fullscreen = s.fullscreen;
+  auto push_raw = [](Ev e, const SDL_Event& raw) {
+    e.raw = raw;
+    g_sh.Push(e);
+  };
   auto last_title = Clock::now();
   bool quit_sent = false;
   while (!g_sh.done) {
@@ -858,28 +1050,35 @@ int RunGame(const GameOptions& opt) {
           if (ev.key.repeat) break;
           if (ev.key.keysym.scancode == SDL_SCANCODE_F12) {
             g_sh.Push({Ev::Shot});
+          } else if (ev.key.keysym.scancode == SDL_SCANCODE_F1) {
+            g_sh.Push({Ev::ToggleMenu});
           } else if (ev.key.keysym.scancode == SDL_SCANCODE_F11 ||
                      (ev.key.keysym.scancode == SDL_SCANCODE_RETURN && (ev.key.keysym.mod & KMOD_ALT))) {
             fullscreen = !fullscreen;
             SDL_SetWindowFullscreen(win.sdl(), fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+            g_sh.Push({Ev::Fullscreen, fullscreen ? 1 : 0});
           } else {
-            g_sh.Push({Ev::Key, ev.key.keysym.scancode, 1});
+            push_raw({Ev::Key, ev.key.keysym.scancode, 1}, ev);
           }
           break;
-        case SDL_KEYUP: g_sh.Push({Ev::Key, ev.key.keysym.scancode, 0}); break;
+        case SDL_KEYUP: push_raw({Ev::Key, ev.key.keysym.scancode, 0}, ev); break;
+        case SDL_TEXTINPUT:
+        case SDL_MOUSEWHEEL:
+          push_raw({Ev::Sdl}, ev);
+          break;
         case SDL_MOUSEBUTTONDOWN:
         case SDL_MOUSEBUTTONUP: {
           if (ev.button.which == SDL_TOUCH_MOUSEID) break;
           int x, y;
           to_drawable(ev.button.x, ev.button.y, x, y);
-          g_sh.Push({Ev::MouseButton, ev.button.button, ev.type == SDL_MOUSEBUTTONDOWN, x, y});
+          push_raw({Ev::MouseButton, ev.button.button, ev.type == SDL_MOUSEBUTTONDOWN, x, y}, ev);
           break;
         }
         case SDL_MOUSEMOTION: {
           if (ev.motion.which == SDL_TOUCH_MOUSEID) break;
           int x, y;
           to_drawable(ev.motion.x, ev.motion.y, x, y);
-          g_sh.Push({Ev::MouseMove, 0, 0, x, y});
+          push_raw({Ev::MouseMove, 0, 0, x, y}, ev);
           break;
         }
         case SDL_FINGERDOWN:
@@ -903,7 +1102,7 @@ int RunGame(const GameOptions& opt) {
           break;
         case SDL_CONTROLLERBUTTONDOWN:
         case SDL_CONTROLLERBUTTONUP:
-          g_sh.Push({Ev::PadButton, ev.cbutton.button, ev.type == SDL_CONTROLLERBUTTONDOWN});
+          push_raw({Ev::PadButton, ev.cbutton.button, ev.type == SDL_CONTROLLERBUTTONDOWN}, ev);
           break;
         case SDL_CONTROLLERAXISMOTION: {
           Ev e{Ev::PadAxis, ev.caxis.axis};
@@ -913,6 +1112,10 @@ int RunGame(const GameOptions& opt) {
         }
         default:
           if (ev.type == g_user_event && ev.user.code == kUserMinimize) SDL_MinimizeWindow(win.sdl());
+          if (ev.type == g_user_event && ev.user.code == kUserFullscreen) {
+            fullscreen = reinterpret_cast<std::intptr_t>(ev.user.data1) != 0;
+            SDL_SetWindowFullscreen(win.sdl(), fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+          }
           break;
       }
     } while (SDL_PollEvent(&ev));
@@ -925,7 +1128,9 @@ int RunGame(const GameOptions& opt) {
   gl_thread.join();
   ReportUnimplemented();
   const int rc = g_sh.rc;
+  backup.Stop();
   log::Info("saliendo con codigo {}", rc);
+  log::Shutdown();
   // Quedan hilos guest vivos (Vox, pool de tareas...): no se destruye nada, se termina el proceso.
   std::fflush(nullptr);
   std::_Exit(rc);

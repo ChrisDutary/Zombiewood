@@ -51,6 +51,10 @@ int main(int argc, char** argv) {
     else if (auto v = val("--script="); !v.empty()) opt.script = v;
     else if (auto v = val("--control="); !v.empty()) opt.control = v;
     else if (auto v = val("--shot-every="); !v.empty()) opt.shot_every = std::atoi(v.c_str());
+    else if (auto v = val("--install="); !v.empty()) opt.install_apk = std::filesystem::path(v);
+    else if (auto v = val("--obb="); !v.empty()) opt.obbs.push_back(std::filesystem::path(v));
+    else if (a == "--reinstall") opt.reinstall = true;
+    else if (a == "--install-only") opt.install_only = true;
     else if (a == "--no-audio") opt.no_audio = true;
     else if (a == "--hidden") opt.hidden = true;
     else if (a == "--uncapped") opt.uncapped = true;
