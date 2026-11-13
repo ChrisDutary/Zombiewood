@@ -152,3 +152,17 @@ El código propio de este repositorio es el runtime (cargador, HLE, frontend). U
 
 Los textos de licencia completos viajan en `licenses/` dentro del zip. *Zombiewood* es propiedad de sus respectivos titulares
 (Gameloft / TechJ5 Games); este proyecto no está afiliado a ellos, no redistribuye su contenido y requiere una copia legítima.
+
+## Legal
+
+- **Licencia del proyecto:** el código y la documentación propios de este repositorio (runtime, herramientas y docs) se
+  publican bajo la [licencia MIT](LICENSE) — © 2026 ChrisDutary. Puedes usarlos, modificarlos y redistribuirlos
+  manteniendo el aviso de copyright; se entregan "tal cual", **sin garantía de ningún tipo**.
+- **El juego no es parte del proyecto:** *Zombiewood*, su nombre, logotipos, gráficos, sonidos, vídeos, código y datos son
+  propiedad de Gameloft y de sus respectivos titulares. Este repositorio y sus descargas **no incluyen** ningún contenido
+  del juego; cada usuario debe aportar su propia copia legítima. La licencia MIT **no** se aplica a ese contenido.
+- **Sin afiliación:** este es un proyecto independiente y sin ánimo de lucro, sin relación con Gameloft ni respaldado por
+  ella. Todas las marcas pertenecen a sus dueños.
+- **Arte de terceros:** el icono y el cursor que puede incrustar el ejecutable pertenecen a sus autores y no están cubiertos
+  por la licencia MIT. Las bibliotecas usadas mantienen sus propias licencias (ver la tabla anterior y `licenses/`).
+- Si eres titular de algún derecho y quieres que se retire algo, abre un *issue* en el repositorio y se atenderá.

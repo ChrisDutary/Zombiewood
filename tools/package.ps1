@@ -113,6 +113,7 @@ foreach ($pair in @(@('imgui_src-src', 'imgui'), @('dynarmic-src', 'dynarmic')))
 }
 Set-Content -Encoding UTF8 (Join-Path $lic 'gamecontrollerdb.txt') 'SDL_GameControllerDB (mdqinc) - licencia zlib: https://github.com/mdqinc/SDL_GameControllerDB/blob/master/LICENSE'
 Copy-Item (Join-Path $root 'README.md') (Join-Path $stage 'README.md')
+Copy-Item (Join-Path $root 'LICENSE') (Join-Path $stage 'LICENSE.txt')   # licencia MIT del proyecto
 
 # Comprobacion: ningun dato del juego
 $bad = Get-ChildItem $stage -Recurse -File | Where-Object { $_.Extension -in '.apk', '.obb', '.so', '.mp4', '.bar', '.dex' }

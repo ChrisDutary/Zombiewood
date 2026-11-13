@@ -8,6 +8,16 @@ Cada versión se publica como release en [GitHub](https://github.com/ChrisDutary
 **Actualizar sin perder tu partida:** cierra el juego y copia el contenido del zip nuevo encima de tu carpeta
 (reemplazar archivos). El zip solo trae el programa; `saves/`, `data/` y `zombiewood.json` no se tocan.
 
+## [Sin publicar]
+
+Cambios ya en `main` que saldrán en la próxima versión.
+
+### Añadido
+- **Licencia MIT** (`LICENSE`, © 2026 ChrisDutary) para el código y la documentación propios del proyecto. El zip la
+  incluirá como `LICENSE.txt`.
+- Sección **Legal** en el README: el juego y su contenido son de Gameloft y no están cubiertos por la licencia; proyecto
+  sin afiliación; arte de terceros (icono/cursor) fuera de la licencia; vía de contacto para retiradas.
+
 ## Repositorio
 
 - 2026-11-13: el proyecto se mudó a su propio repositorio público [ChrisDutary/Zombiewood](https://github.com/ChrisDutary/Zombiewood)
