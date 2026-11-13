@@ -76,7 +76,14 @@ $files  = 'zombiewood.exe', 'SDL2.dll', 'libEGL.dll', 'libGLESv2.dll', 'z.dll'
 foreach ($f in $files) { if (-not (Test-Path (Join-Path $exeDir $f))) { throw "Falta $f en $exeDir (compila primero)" } }
 
 Write-Host "== Montando $stage"
-if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+if (Test-Path $stage) {
+  # La carpeta de staging se regenera entera; si alguien jugo desde ella (data/saves), no borrarla.
+  $userState = 'data', 'saves', 'saves_backup', 'zombiewood.json' | Where-Object { Test-Path (Join-Path $stage $_) }
+  if ($userState) {
+    throw "$stage contiene datos de usuario ($($userState -join ', ')). Muevelos a otra carpeta de juego o borralos a mano; no se sobrescribe."
+  }
+  Remove-Item -Recurse -Force $stage
+}
 New-Item -ItemType Directory -Force $stage | Out-Null
 foreach ($f in $files) { Copy-Item (Join-Path $exeDir $f) $stage }
 Copy-Item (Join-Path $pkgSrc 'gamecontrollerdb.txt') $stage
