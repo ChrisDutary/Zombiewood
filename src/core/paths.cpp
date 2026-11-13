@@ -1,6 +1,7 @@
 #include "core/paths.h"
 
 #include <windows.h>
+#include <shellapi.h>
 
 #include <cstdlib>
 
@@ -26,5 +27,13 @@ std::filesystem::path Home() {
 
 std::filesystem::path LogsDir() { return Home() / "logs"; }
 std::filesystem::path ConfigFile() { return Home() / "zombiewood.json"; }
+std::filesystem::path DefaultGameDir() { return Home() / "data"; }
+std::filesystem::path SavesDir() { return Home() / "saves"; }
+
+void OpenFolder(const std::filesystem::path& p) {
+  std::error_code ec;
+  std::filesystem::create_directories(p, ec);
+  ShellExecuteW(nullptr, L"explore", p.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
 
 }  // namespace zw::paths

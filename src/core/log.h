@@ -7,8 +7,14 @@
 namespace zw::log {
 enum class Level { Debug, Info, Warn, Error };
 
-// Abre <Home>/logs/zombiewood.log (truncado) y habilita salida por consola.
+// Rota los logs (<Home>/logs/zombiewood.log -> zombiewood.1.log ... se conservan 5; tambien rota en caliente
+// al pasar de 32 MiB), abre uno nuevo y habilita salida por consola.
 void Init();
+// Escribe los resumenes de repeticiones pendientes y cierra el fichero.
+void Shutdown();
+// Mensajes Info/Debug identicos repetidos mas de 3 veces en 30 s se suprimen y se resumen como "(xN ...)".
+// Activo por defecto; ZW_LOG_NODEDUP=1 lo desactiva.
+void SetDedup(bool on);
 void Write(Level lvl, std::string_view msg);
 
 template <class... A>
