@@ -549,3 +549,21 @@ con el JNI real, y lista la cobertura.
 `zombiewood --load-only` use el JNI de T7 basta con (a) añadir a `RunLoadOnly` un parámetro `gaddr java_vm = 0` y usar
 `java_vm ? java_vm : bootstrap::FakeJavaVM()`, y (b) en `main.cpp`: `zw::jni::Register(); return zw::loader::RunLoadOnly(libs,
 zw::jni::JavaVM());`.
+
+## Frontend / integración (T8) — `frontend/game.h`, `frontend/input.h`
+
+- `zw::RunGame(opts)`: hilo UI (principal) = SDL + pasos 0–7 de ANALYSIS §4; hilo GL = contexto GLES, pasos 8–13 y bucle
+  `GL2JNILib.step` + presentación. Todo el input se inyecta entre frames desde el hilo GL (`Game.nativeOnTouch`,
+  `nativeOnKeyDown/Up`). Minimizar → `GL2JNILib.pause` + `nativeVoxSuspend` + `audio::set_global_paused(true)`; restaurar → lo
+  inverso. Cerrar la ventana → pausa (el juego guarda) y `_Exit` (quedan hilos guest vivos: no hay destrucción ordenada).
+- **Añadido a T5**: `hle::gles::SetDefaultFramebuffer(fbo)`: el framebuffer 0 del guest es un FBO del frontend (RGBA8 +
+  D24S8 a resolución interna) que se copia a la ventana con `glBlitFramebuffer` (letterbox). `glBindFramebuffer(_, 0)` liga
+  ese FBO y `GL_FRAMEBUFFER_BINDING` devuelve 0 cuando está ligado.
+- **Añadido a T3**: `loader::RunLoadOnly(libs, java_vm = 0)`; `zombiewood --load-only` registra la HLE real y usa `jni::JavaVM()`.
+- `jni::config()`: `screen_w/h` = resolución interna, `prefs_file` = `<saves>/zw_prefs.json`, `assets_dir`, `language`;
+  `patch_obb` se vacía si el fichero no existe. Hooks: `send_to_background` minimiza la ventana; `exit` conserva el valor por
+  defecto (`GuestExit`, capturado por el hilo GL); `play_cinematic` sin enganchar (vídeos saltados → T9).
+- `input::Mapper`: punteros 0 = ratón, 1 = stick mover, 2 = stick apuntar, 3+ = botones del HUD, 10+ = dedos reales.
+  Medidas del HUD a 1280×720: sticks en (170,590) y (1108,590), radio ≈ 82 px; son fijos (no flotantes).
+- Medido (win-release, RTX 3060 Laptop, 1280×720): 60 fps con vsync (step 2–9 ms); sin límite ≈ 490–520 fps en menú y
+  130–210 fps en partida. El juego usa tiempo real: no depende de 30/60 fijos.

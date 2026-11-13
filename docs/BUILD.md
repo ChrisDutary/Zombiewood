@@ -40,21 +40,70 @@ La primera configuración tarda bastante (vcpkg compila ANGLE y SDL2 desde fuent
 ## Ejecutar
 
 ```bat
-C:\Users\chdut\ZombiewoodDev\build\win-debug\src\frontend\zombiewood.exe
-C:\Users\chdut\ZombiewoodDev\build\win-debug\src\frontend\zombiewood.exe --smoke-test=120
+set ZOMBIEWOOD_HOME=C:\Users\chdut\ZombiewoodDev\run
+C:\Users\chdut\ZombiewoodDev\build\win-release\src\frontend\zombiewood.exe
 ```
 
-- `--smoke-test[=N]`: renderiza N frames (120 por defecto) y sale solo con código 0.
-- El post-build copia `libEGL.dll` y `libGLESv2.dll` (ANGLE) junto al exe; SDL las carga como driver GLES
-  (`SDL_HINT_OPENGL_ES_DRIVER=1` + perfil `SDL_GL_CONTEXT_PROFILE_ES`).
-- Log: `<home>/logs/zombiewood.log` (además de consola). Config opcional: `<home>/zombiewood.json`
-  (`width`, `height`). `<home>` es la variable de entorno `ZOMBIEWOOD_HOME` si existe, si no la carpeta del exe.
+`<home>` es `ZOMBIEWOOD_HOME` si existe, si no la carpeta del exe. Ahí van `zombiewood.json`, `logs/zombiewood.log`,
+`data/`, `saves/` (partida: `player.dat`, `zomb.dat`, `level.dat`, `zw_prefs.json`…), `screens/` y, opcional,
+`gamecontrollerdb.txt`. El juego original lo aporta el usuario (`game_dir`), nunca va en el repo.
+
+`zombiewood.json` (todas las claves son opcionales; los comentarios son solo de esta página):
+
+```json
+{
+  "game_dir": "C:/Users/chdut/ZombiewoodDev/gamedata",   // lib/libZombieWood.so + obb/*.obb (+ assets del APK)
+  "lib": "...", "assets_dir": "...", "screens_dir": "...",  // sobreescriben lo derivado de game_dir / home
+  "vfs": { "data_dir": "data", "saves_dir": "saves", "obb_dir": "..." },
+  "width": 1280, "height": 720, "fullscreen": false,      // ventana
+  "internal_width": 1280, "internal_height": 720,         // resolución a la que dibuja el juego (se escala con letterbox)
+  "internal_follows_window": false,                       // true: resolución interna = ventana (GL2JNILib.resize al cambiar)
+  "linear_filter": true, "vsync": true, "fps_limit": 60,  // fps_limit 0 = sin límite; el juego usa tiempo real
+  "pause_on_focus_loss": false,                           // minimizar siempre pausa (pause + nativeVoxSuspend)
+  "language": 0,                                          // 0 en,1 fr,2 de,3 es,4 it,5 pt,6 ja,7 ko,8 zh,9 ru
+  "input": { }                                            // ver abajo
+}
+```
+
+Controles por defecto (el juego solo entiende toques y BACK/MENU: teclado y mando se traducen a toques virtuales
+sobre el HUD, `src/frontend/input.cpp`):
+
+| Acción | Ratón / teclado | Mando |
+|---|---|---|
+| Tocar (menús, botones) | clic izquierdo (puntero 0); pantallas táctiles: multitouch | — |
+| Mover | `W A S D` (stick virtual izquierdo) | stick izquierdo |
+| Apuntar y disparar | flechas, o mantener clic derecho (dispara hacia el cursor) | stick derecho |
+| Botiquín / arma / pausa / aceptar (`>>`) | `E` · `Q` · `P` · `Espacio` | `Y` · `RB`/`X` · `Start` · `A` |
+| Atrás (BACK) / MENU | `Esc` · `Tab` | `Back`/`B` · `Guide` |
+| Captura PNG / pantalla completa | `F12` · `F11` o `Alt+Enter` | — |
+
+Objeto `"input"` (se fusiona sobre los valores por defecto; `x`,`y` normalizados 0–1, `radius` en fracción del alto;
+teclas = nombres de `SDL_GetScancodeFromName`, mando = nombres de `SDL_GameController`):
+
+```json
+"input": {
+  "deadzone": 0.25, "mouse_touch": true, "mouse_aim_button": "right", "player_pos": [0.5, 0.45],
+  "move_stick": { "x": 0.133, "y": 0.82, "radius": 0.105, "keys": {"up":"W","down":"S","left":"A","right":"D"}, "pad_stick": "left" },
+  "aim_stick":  { "x": 0.866, "y": 0.82, "radius": 0.105, "keys": {"up":"Up","down":"Down","left":"Left","right":"Right"}, "pad_stick": "right" },
+  "buttons": [ { "name": "botiquin", "x": 0.934, "y": 0.542, "keys": ["E"], "pad": ["y"] } ],
+  "android_keys": [ { "code": 4, "keys": ["Escape"], "pad": ["back"] } ]
+}
+```
+
+Opciones de línea de comandos: `--lib=<so>`, `--no-audio`, `--uncapped` (sin vsync ni límite, para medir), `--frames=N`,
+`--shot-every=N`, `--hidden`, `--script=<fichero>` / `--control=<fichero>` (comandos de prueba: `wait`, `tap`,
+`down/move/up`, `key`, `sdlkey`, `pad`, `axis`, `mouse`, `shot`, `pause`, `resume`, `resize`, `quit`; con `--control`
+se ejecutan las líneas que se van añadiendo al fichero), `--load-only <so>` (diagnóstico de carga con la HLE real) y
+`--smoke-test[=N]` (prueba de ventana + ImGui de T2, sin juego). Entorno: `ZW_TRACE_INPUT=1`, `ZW_AUDIO_DUMP=<pcm>`
+y los de CONTRACTS §8.
+
+- El post-build copia `libEGL.dll`, `libGLESv2.dll` (ANGLE) y `z.dll` junto al exe. El contexto se pide ES 3.0 (el juego
+  usa ES 2.0; el frontend necesita `glBlitFramebuffer` para escalar el framebuffer interno).
 
 ## Estructura de targets
 
 `zw_core` (log/config/paths), `zw_loader`, `zw_cpu` (+ `zw_cpu_deps` = dynarmic), `zw_hle_libc`, `zw_hle_gles`,
-`zw_hle_audio`, `zw_jni`, `zw_frontend` (ventana SDL2 + contexto GLES2) y el ejecutable `zombiewood`.
-Los módulos aparte de `zw_core`, `zw_cpu_deps` y `zw_frontend` son placeholders hasta sus tareas.
+`zw_hle_audio`, `zw_jni`, `zw_frontend` (ventana SDL2 + contexto GLES, arranque, hilo GL, input) y el ejecutable `zombiewood`.
 
 ## Notas
 
