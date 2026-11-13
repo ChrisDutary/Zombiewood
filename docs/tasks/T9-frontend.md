@@ -11,7 +11,13 @@ Experiencia tipo Ship of Harkinian para el usuario final.
 - `zombiewood.json`: backend (ANGLE D3D11 / OpenGL vía ANGLE), resolución interna, vsync, fullscreen, volumen, mapa de controles, ruta de datos.
 - Menú ImGui (tecla F1, barra superior como SoH): gráficos, audio, controles (remapeo), mostrar FPS, abrir carpeta de saves/logs.
 - Saves en `<home>/saves/` (mapeados desde `/data/data/...`), backup automático antes de sobrescribir.
-- Logs rotativos en `<home>/logs/`.
+- Logs rotativos en `<home>/logs/`. Limita el spam del juego ("Sending TapJoy request… Response not valid", ~10 líneas/s
+  en menús): agrupa repeticiones idénticas o cortocircuita la petición TapJoy en la capa JNI/red para que no se genere.
+- **Vídeos** (pendiente de T8, hoy se saltan): los `.mp4` de `res/raw` del APK (`logo_hd`, `intro_hd`, `moviecomplete_hd/ld`…)
+  que pide `SUtils` (ver ANALYSIS §8 y la clase emulada en `src/jni`). Extráelos en la instalación y reprodúcelos a pantalla
+  completa con **Windows Media Foundation** (sin dependencias nuevas; `IMFSourceReader` → textura GLES vía ANGLE, audio por
+  SDL) con salto por clic/tecla, y al terminar llama `SUtils.onVideoFinished` como hace Java. Si un vídeo falla, se salta como hoy.
+  Opción `skip_videos` en `zombiewood.json`.
 
 ## Evidencia
 Prueba desde carpeta limpia: exe + DLLs → elegir `C:\Users\chdut\OneDrive\Escritorio\techj5gameszombiew153.apk` → instala → arranca el juego. Capturas del menú.
