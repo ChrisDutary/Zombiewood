@@ -32,6 +32,9 @@ struct Settings {
   float volume = 1.0f;        // 0..1, audio del juego (Vox -> AudioTrack)
   float video_volume = 1.0f;  // 0..1, audio de los videos
   bool mute = false;
+  std::string pad_driver = "auto";       // "auto" (HIDAPI) | "compat" (sin HIDAPI, si Steam/DS4Windows bloquean el mando); al reiniciar
+  std::string audio_latency = "normal";  // "low" (80 ms) | "normal" (150 ms) | "safe" (250 ms); al reiniciar
+  int AudioLatencyMs() const { return audio_latency == "low" ? 80 : audio_latency == "safe" ? 250 : 150; }
   // --- videos ---
   bool skip_videos = false;
   bool play_logo = true;  // logo_hd.mp4 al arrancar (splash Java original)

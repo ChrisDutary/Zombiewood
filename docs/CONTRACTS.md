@@ -505,6 +505,9 @@ int s = t.play_state();                        // kStateStopped=1, kStatePaused=
 - Global control (T9's menu, `nativeVoxMute`, minimizing): `audio::set_master_volume(0..1)`, `set_muted(bool)`,
   `set_global_paused(bool)` (pauses/resumes every track without changing its `play_state`). Applied in the callback, so it
   also affects data already queued.
+- (0.2.2) `audio::set_latency_ms(ms)` (before tracks are created; the frontend maps `audio_latency` to 80/150/250 ms) sets the
+  queue size; the device block is 1024 frames below 120 ms, 2048 otherwise. After a dropout the track re-primes (outputs
+  silence until half the queue is filled, or until the writer has been idle for 60 ms). `audio::underrun_count()` counts dropouts.
 - Tests/CI: `audio::set_driver("dummy")` before creating the first track; `audio::set_tap(fn)` observes what goes to the device.
 - **OpenSL ES** (`zw::hle::audio::Register()`, `audio_hle.h`; T8 calls it before `loader::Load`): defines `SL_IID_ENGINE`,
   `SL_IID_PLAY`, `SL_IID_BUFFERQUEUE` (pointer variables to 16-byte `SLInterfaceID_` with the real GUIDs) and registers

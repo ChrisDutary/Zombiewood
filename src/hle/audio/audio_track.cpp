@@ -15,6 +15,8 @@ namespace {
 std::atomic<float> g_vol{1.0f};
 std::atomic<bool> g_muted{false};
 std::atomic<bool> g_gpaused{false};
+std::atomic<int> g_latency_ms{150};
+std::atomic<uint64_t> g_underruns{0};
 std::mutex g_mu;  // protege g_tracks, g_driver, g_tap
 std::list<Track*> g_tracks;
 std::string g_driver;
@@ -57,6 +59,9 @@ void set_global_paused(bool p) {
   refresh_all();
 }
 bool global_paused() { return g_gpaused.load(); }
+void set_latency_ms(int ms) { g_latency_ms = std::clamp(ms, 40, 500); }
+int latency_ms() { return g_latency_ms.load(); }
+uint64_t underrun_count() { return g_underruns.load(); }
 void set_driver(const char* name) {
   std::lock_guard lk(g_mu);
   g_driver = name ? name : "";
@@ -71,18 +76,22 @@ Track::Track(int, int rate, int channel_cfg, int encoding, int buffer_bytes, int
   channels_ = channel_cfg == kChannelOutMono || channel_cfg == 2 ? 1 : 2;
   bits_ = encoding == kEncodingPcm8 ? 8 : 16;
   frame_bytes_ = channels_ * bits_ / 8;
-  max_queue_ = (size_t)rate_ / 10 * frame_bytes_;  // 100 ms
+  const int lat = g_latency_ms.load();
+  max_queue_ = (size_t)rate_ * (size_t)lat / 1000 * frame_bytes_;
   hard_cap_ = std::max<size_t>(max_queue_ * 2, (size_t)std::max(buffer_bytes, 0));
+  prime_bytes_ = max_queue_ / 2;  // reanudar con media cola llena
   if (ensure_sdl()) {
     SDL_AudioSpec want{}, have{};
     want.freq = rate_;
     want.format = bits_ == 8 ? AUDIO_U8 : AUDIO_S16SYS;
     want.channels = (Uint8)channels_;
-    want.samples = 1024;
+    // Bloque del dispositivo: 1024 frames (~23 ms) en latencia baja; 2048 (~46 ms) en normal/segura.
+    want.samples = lat < 120 ? 1024 : 2048;
     want.callback = &Track::OnAudio;
     want.userdata = this;
     dev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);  // SDL convierte formato/frecuencia
     if (!dev_) log::Warn("audio: SDL_OpenAudioDevice fallo: {} (fallback silencioso a tiempo real)", SDL_GetError());
+    else log::Info("audio: latencia {} ms, bloque del dispositivo {} frames ({} Hz)", lat, have.samples, have.freq);
   }
   if (!dev_) fallback_ = std::thread(&Track::fallback_loop, this);
   std::lock_guard lk(g_mu);
@@ -117,6 +126,7 @@ void Track::stop() {
     std::lock_guard lk(mu_);
     ring_.clear();
     rhead_ = 0;
+    primed_ = false;
   }
   apply_device_state();
 }
@@ -162,6 +172,7 @@ int Track::write(const void* pcm, int bytes) {
     }
     ring_.insert(ring_.end(), p + done, p + done + n);
     done += (int)n;
+    last_write_ = std::chrono::steady_clock::now();
   }
   return done;
 }
@@ -171,7 +182,16 @@ void Track::fill(uint8_t* out, int len) {
   {
     std::lock_guard lk(mu_);
     const size_t q = ring_.size() - rhead_;
-    got = (int)std::min<size_t>(q, (size_t)len);
+    // Cebado: tras arrancar o quedarse sin datos, esperar a tener media cola antes de sonar. Asi un PC
+    // cargado produce un silencio breve en vez de audio entrecortado (antes sonaba "lageado" al arrancar).
+    // Si el juego dejo de escribir (fin de un sonido, pausa), lo que quede se reproduce igual.
+    const auto idle = std::chrono::steady_clock::now() - last_write_;
+    if (!primed_ && (q >= prime_bytes_ || (q > 0 && idle > std::chrono::milliseconds(60)))) primed_ = true;
+    got = primed_ ? (int)std::min<size_t>(q, (size_t)len) : 0;
+    if (primed_ && got < len) {
+      primed_ = false;  // se vacio la cola: volver a cebar
+      if (should_run()) g_underruns.fetch_add(1);
+    }
     if (got > 0) {
       std::memcpy(out, ring_.data() + rhead_, (size_t)got);
       rhead_ += (size_t)got;
