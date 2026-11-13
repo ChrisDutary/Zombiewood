@@ -1,73 +1,77 @@
-# Zombiewood — plan de trabajo
+# Zombiewood — work plan
 
-Port nativo para Windows x64 de *Zombiewood* (Gameloft, Android 1.5.3, `com.gameloft.android.ANMP.GloftZOHM`)
-al estilo Ship of Harkinian: este repo contiene **solo el runtime**; cada usuario aporta su propia copia
-(APK + OBB). Nunca se commitean archivos del juego (ver `.gitignore`).
+Native Windows x64 port of *Zombiewood* (Gameloft, Android 1.5.3, `com.gameloft.android.ANMP.GloftZOHM`) in the style
+of Ship of Harkinian: this repo contains **only the runtime**; every user provides their own copy (APK + OBB). Game
+files are never committed (see `.gitignore`).
 
-## Técnica: so-loader + CPU ARM32 por JIT
+> Historical document: this is the plan the port was built with (November 2026). Paths under `C:\Users\…` refer to the
+> original development machine.
 
-`libZombieWood.so` es ELF32 ARM (armeabi-v7a), 35,581 símbolos exportados (sin strip), 364 imports:
+## Technique: so-loader + JIT ARM32 CPU
 
-| Lib importada | Cantidad aprox. | Reemplazo |
+`libZombieWood.so` is an ELF32 ARM (armeabi-v7a) library with 35,581 exported symbols (not stripped) and 364 imports:
+
+| Imported lib | Approx. count | Replacement |
 |---|---|---|
-| libGLESv2 | 99 | ANGLE (GLES2 sobre D3D11), traducción de punteros guest→host |
+| libGLESv2 | 99 | ANGLE (GLES2 on D3D11), guest→host pointer translation |
 | libOpenSLES | 4 (engine + bufferqueue + play) | SDL2 audio |
-| libc / libm / libdl / pthread (bionic) | ~240 | `hle/libc` con ABI bionic de 32 bits |
-| libstdc++ (mínimo de Android) | — | `hle/libc` (operator new/delete, __cxa_*) |
-| liblog | 2 | log a archivo/consola |
-| sockets | 15 | stubs (sin red: servidores de Gameloft ya no existen) |
+| libc / libm / libdl / pthread (bionic) | ~240 | `hle/libc` with the 32-bit bionic ABI |
+| libstdc++ (Android's minimal one) | — | `hle/libc` (operator new/delete, __cxa_*) |
+| liblog | 2 | log to file/console |
+| sockets | 15 | stubs (no network: Gameloft's servers no longer exist) |
 
-Entrada: `JNI_OnLoad` + 88 funciones `Java_*` (ver `docs/ANALYSIS.md`). No usa EGL ni libandroid.
-Datos: OBB `main.1501…obb` (276 MB, `.bar`) + `patch.15325…obb`, rutas `/sdcard/gameloft/games/…` y `/data/data/com.gameloft.android.ANMP.GloftZOHM/`.
+Entry points: `JNI_OnLoad` + 88 `Java_*` functions (see `docs/ANALYSIS.md`). It does not use EGL or libandroid.
+Data: OBB `main.1501…obb` (276 MB, `.bar`) + `patch.15325…obb`, paths `/sdcard/gameloft/games/…` and
+`/data/data/com.gameloft.android.ANMP.GloftZOHM/`.
 
-## Estructura
+## Layout
 
 ```
-Zombiewood/
+(repo root)
   CMakeLists.txt, CMakePresets.json, vcpkg.json
   src/
-    core/      utilidades comunes (log, config, paths)
-    loader/    carga ELF32 ARM, relocs, resolución de imports (T3)
-    cpu/       dynarmic A32, memoria guest, puente host<->guest, hilos (T3)
+    core/      shared utilities (log, config, paths)
+    loader/    ELF32 ARM loading, relocations, import resolution (T3)
+    cpu/       dynarmic A32, guest memory, host<->guest bridge, threads (T3)
     hle/libc/  bionic libc/libm/pthread/libstdc++ (T4)
     hle/gles/  GLES2 -> ANGLE (T5)
     hle/audio/ OpenSL ES -> SDL2 (T6)
-    jni/       JNIEnv/JavaVM falsos + clases Java emuladas (T7)
-    frontend/  main, ventana SDL2, input, ImGui (T2/T8/T9)
-    installer/ extracción de APK/OBB del usuario (T9)
+    jni/       fake JNIEnv/JavaVM + emulated Java classes (T7)
+    frontend/  main, SDL2 window, input, ImGui (T2/T8/T9)
+    installer/ extraction of the user's APK/OBB (T9)
   docs/        PLAN.md, ANALYSIS.md, CONTRACTS.md, BUILD.md
-  tools/       scripts de análisis/inspección
+  tools/       analysis/inspection scripts
 ```
 
-## Entorno de desarrollo (fuera del repo, el repo vive en OneDrive)
+## Development environment (outside the repo, which lives in OneDrive)
 
-- Datos de prueba: `C:\Users\chdut\ZombiewoodDev\gamedata\` (`lib/libZombieWood.so`, `obb/*.obb`, `classes.dex`, `AndroidManifest.xml`)
-- APK completo: `C:\Users\chdut\OneDrive\Escritorio\techj5gameszombiew153.apk` (solo lectura)
-- Build: `C:\Users\chdut\ZombiewoodDev\build\` (`cmake --preset` debe apuntar ahí)
-- Análisis: `C:\Users\chdut\ZombiewoodDev\analysis\`
-- Herramientas: `C:\Users\chdut\Tools\` (vcpkg, jdk-21, ghidra_12.1.4_PUBLIC, android\apktool.bat, jadx-headless-mcp); REA CLI `rea`
+- Test data: `C:\Users\chdut\ZombiewoodDev\gamedata\` (`lib/libZombieWood.so`, `obb/*.obb`, `classes.dex`, `AndroidManifest.xml`)
+- Full APK: `C:\Users\chdut\OneDrive\Escritorio\techj5gameszombiew153.apk` (read-only)
+- Build: `C:\Users\chdut\ZombiewoodDev\build\` (`cmake --preset` must point there)
+- Analysis: `C:\Users\chdut\ZombiewoodDev\analysis\`
+- Tools: `C:\Users\chdut\Tools\` (vcpkg, jdk-21, ghidra_12.1.4_PUBLIC, android\apktool.bat, jadx-headless-mcp); REA CLI `rea`
 
-## Tareas (DAG)
+## Tasks (DAG)
 
-| # | Tarea | Depende | Modelo |
+| # | Task | Depends on | Model |
 |---|---|---|---|
-| T1 | Análisis profundo (REA/Ghidra/JADX) → `docs/ANALYSIS.md` | — | Fable |
-| T2 | Esqueleto CMake/vcpkg, ventana SDL2 + contexto GLES2 vía ANGLE | — | Sonnet |
-| T3 | Loader ELF + CPU dynarmic + thunks de imports + bridge + hilos | T1, T2 | Fable |
-| T4 | HLE libc/libm/pthread/libstdc++ | T3 | Opus |
-| T5 | HLE GLES2 → ANGLE | T3 | Opus |
-| T6 | HLE OpenSL ES → SDL2 | T3 | Sonnet |
-| T7 | JNI/Java falso | T1, T3 | Opus |
-| T8 | Integración y bucle de juego, input; jugar menú → partida | T4–T7 | Fable |
-| T9 | Instalador de datos, config, saves, menú ImGui | T8 | Sonnet |
-| T10 | Empaquetado Win64, README, QA | T9 | Sonnet |
+| T1 | Deep analysis (REA/Ghidra/JADX) → `docs/ANALYSIS.md` | — | Fable |
+| T2 | CMake/vcpkg skeleton, SDL2 window + GLES2 context via ANGLE | — | Sonnet |
+| T3 | ELF loader + dynarmic CPU + import thunks + bridge + threads | T1, T2 | Fable |
+| T4 | libc/libm/pthread/libstdc++ HLE | T3 | Opus |
+| T5 | GLES2 → ANGLE HLE | T3 | Opus |
+| T6 | OpenSL ES → SDL2 HLE | T3 | Sonnet |
+| T7 | Fake JNI/Java | T1, T3 | Opus |
+| T8 | Integration and game loop, input; play from menu → match | T4–T7 | Fable |
+| T9 | Data installer, config, saves, ImGui menu | T8 | Sonnet |
+| T10 | Win64 packaging, README, QA | T9 | Sonnet |
 
-## Reglas para todos los workers
+## Rules for all workers
 
-1. Rama `main`, worktree compartido: edita **solo** las carpetas de tu tarea (+ tu sección en docs). Si necesitas tocar
-   otra, pídelo al coordinador con `ask`.
-2. No commitees archivos del juego ni builds. No hagas `git push`. Commits pequeños con prefijo `zombiewood(Tn):` y
-   `git add` solo de tus rutas (otros workers trabajan en paralelo).
-3. La interfaz entre módulos está en `docs/CONTRACTS.md` (la escribe T3). Cambios a contratos → `ask` al coordinador.
-4. C++20, MSVC/clang-cl x64, sin dependencias fuera de vcpkg/FetchContent con versión fijada.
-5. Evidencia de terminado: build limpio + la prueba que pide tu spec, con salida pegada en tu reporte.
+1. `main` branch, shared worktree: edit **only** your task's folders (+ your section in the docs). If you need to touch
+   another one, ask the coordinator with `ask`.
+2. Do not commit game files or builds. Do not `git push`. Small commits prefixed with `zombiewood(Tn):` and `git add`
+   only your own paths (other workers run in parallel).
+3. The interface between modules is in `docs/CONTRACTS.md` (written by T3). Contract changes → `ask` the coordinator.
+4. C++20, MSVC/clang-cl x64, no dependencies outside vcpkg/FetchContent with a pinned version.
+5. Proof of completion: clean build + the test your spec requires, with its output pasted in your report.

@@ -1,168 +1,187 @@
-# Zombiewood para Windows (port nativo)
+# Zombiewood for Windows (native port)
 
-Runtime para jugar **Zombiewood 1.5.3** (juego de Android, de Gameloft) de forma nativa en Windows 10/11 x64, este proyecto es **solo el entorno de ejecución**. Carga la biblioteca nativa del propio
-juego (`libZombieWood.so`, ARM de 32 bits) con un cargador ELF propio, la ejecuta con un recompilador JIT (dynarmic) y
-sustituye Android por Windows: libc/pthread de bionic, OpenGL ES 2 (ANGLE sobre Direct3D 11), audio (SDL2), JNI, vídeo
-(Media Foundation) y entrada (teclado, ratón, mando → toques virtuales sobre el HUD).
+**English** · [Español](README.es.md)
 
-> ## ⚠️ No incluye el juego
-> Este repositorio y el paquete de descarga **no contienen ningún dato de Zombiewood** (ni código, ni gráficos, ni sonido,
-> ni vídeos). Cada usuario debe aportar **su propia copia legítima** del juego; el instalador integrado extrae lo necesario
-> de tu APK. Los archivos del juego (`*.apk`, `*.obb`, `*.so`, `data/`) están excluidos en `.gitignore` y el script de
-> empaquetado se niega a generar un zip que los contenga.
+A runtime that lets you play **Zombiewood 1.5.3** (an Android game by Gameloft) natively on Windows 10/11 x64. This
+project is **only the execution environment**. It loads the game's own native library (`libZombieWood.so`, 32-bit ARM)
+with a custom ELF loader, runs it through a JIT recompiler (dynarmic) and replaces Android with Windows: bionic
+libc/pthread, OpenGL ES 2 (ANGLE on Direct3D 11), audio (SDL2), JNI, video (Media Foundation) and input (keyboard,
+mouse, gamepad → virtual touches on the HUD).
 
-Estado: jugable a 60 fps (tutorial, menú de películas y la escena 1 "Body Count" completa, con guardado y carga; ver [`docs/QA.md`](docs/QA.md) para lo
-probado y lo no probado: mando físico y escenas 2+ sin probar). Sin conexión: los servidores de Gameloft ya no existen, así que tienda online, TapJoy, etc. no funcionan.
+> ## ⚠️ The game is not included
+> This repository and the download package **contain no Zombiewood data at all** (no code, graphics, sound or videos).
+> Every user must provide **their own legitimate copy** of the game; the built-in installer extracts what it needs from
+> your APK. Game files (`*.apk`, `*.obb`, `*.so`, `data/`) are excluded in `.gitignore`, and the packaging script refuses
+> to build a zip that contains them.
 
-## Requisitos
+Status: playable at 60 fps (tutorial, movie menu and scene 1 "Body Count" fully completed, with saving and loading; see
+[`docs/QA.md`](docs/QA.md) for what has and has not been tested: physical gamepads and scenes 2+ are untested).
+Offline only: Gameloft's servers no longer exist, so the online store, TapJoy, etc. do not work.
 
-- Windows 10 u 11 de 64 bits.
-- GPU con Direct3D 11 (el backend por defecto); alternativamente OpenGL de escritorio.
-- Para los vídeos: Windows Media Foundation (incluido en Windows; en ediciones **N/KN** instala el *Media Feature Pack*, si
-  no, los vídeos se saltan).
-- Tu copia del juego, versión **1.5.3** (paquete `techj5gameszombiew153`):
-  - el APK grande (≈306 MB, trae los OBB dentro en `assets/archiveObbCache.zip.001…`), **o**
-  - el APK original + `main.1501.….obb` y `patch.15325.….obb`.
-  Otras versiones pueden no funcionar (el instalador avisa si los SHA-256 no coinciden).
-- ~1 GB libre en disco para los datos instalados.
+> The in-game port menu (F1) is currently in Spanish; menu names are given below as *Spanish (English)*.
 
-## Instalación
+## Requirements
 
-1. Descarga `Zombiewood-Win64-<versión>.zip` desde la sección **Releases** del repositorio
-   ([última versión](https://github.com/ChrisDutary/Zombiewood/releases/latest)) y descomprímelo
-   en una carpeta con permiso de escritura (p. ej. `C:\Juegos\Zombiewood`, **no** en `Archivos de programa` ni dentro del
-   zip). Contiene `zombiewood.exe`, `SDL2.dll`, `libEGL.dll`, `libGLESv2.dll`, `z.dll`, el runtime de Visual C++
-   (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`), `gamecontrollerdb.txt`, `readme.txt` y `licenses/`.
-   Opcional: comprueba el SHA-256 publicado junto al zip (`Get-FileHash .\Zombiewood-Win64-<versión>.zip`).
-2. Ejecuta `zombiewood.exe`. El exe no está firmado: si Windows SmartScreen muestra *"Windows protegió tu PC"*, pulsa
-   **Más información → Ejecutar de todas formas**. Como aún no hay datos, aparece el asistente de primer arranque dentro de la ventana.
-3. **Elegir APK… (Enter)** → selecciona tu APK. Se extrae en streaming a `data/` (unos segundos en un SSD), se verifican los
-   SHA-256 y se escribe `zombiewood.json`.
-4. **Jugar (Enter)**. Verás el logo, la intro (cualquier tecla la salta) y el juego.
+- Windows 10 or 11, 64-bit.
+- A GPU with Direct3D 11 (the default backend); desktop OpenGL as an alternative.
+- For videos: Windows Media Foundation (built into Windows; on **N/KN** editions install the *Media Feature Pack*,
+  otherwise videos are skipped).
+- Your copy of the game, version **1.5.3** (package `techj5gameszombiew153`):
+  - the large APK (≈306 MB, with the OBBs inside at `assets/archiveObbCache.zip.001…`), **or**
+  - the original APK + `main.1501.….obb` and `patch.15325.….obb`.
+  Other versions may not work (the installer warns you if the SHA-256 hashes do not match).
+- ~1 GB of free disk space for the installed data.
 
-Todo lo que genera el port queda junto al exe (o en `ZOMBIEWOOD_HOME` si defines esa variable de entorno): `data/`, `saves/`,
-`saves_backup/`, `logs/`, `screens/`, `zombiewood.json`. Para desinstalar, borra la carpeta.
+## Installation
 
-Sin interfaz: `zombiewood --install=<apk> [--obb=<main.obb> --obb=<patch.obb>] [--install-only]`; `--reinstall` reabre el asistente.
+1. Download `Zombiewood-Win64-<version>.zip` from the repository's **Releases** section
+   ([latest version](https://github.com/ChrisDutary/Zombiewood/releases/latest)) and extract it into a folder you can
+   write to (e.g. `C:\Games\Zombiewood`; **not** `Program Files`, and not inside the zip). It contains `zombiewood.exe`,
+   `SDL2.dll`, `libEGL.dll`, `libGLESv2.dll`, `z.dll`, the Visual C++ runtime (`msvcp140.dll`, `vcruntime140.dll`,
+   `vcruntime140_1.dll`), `gamecontrollerdb.txt`, `readme.txt`, `LICENSE.txt` and `licenses/`.
+   Optional: check the SHA-256 published next to the zip (`Get-FileHash .\Zombiewood-Win64-<version>.zip`).
+2. Run `zombiewood.exe`. The exe is not signed: if Windows SmartScreen shows *"Windows protected your PC"*, click
+   **More info → Run anyway**. Since there is no data yet, the first-run wizard appears inside the window.
+3. **Elegir APK… / Choose APK… (Enter)** → select your APK. It is streamed into `data/` (a few seconds on an SSD), the
+   SHA-256 hashes are verified and `zombiewood.json` is written.
+4. **Jugar / Play (Enter)**. You will see the logo, the intro (any key skips it) and the game.
 
-## Controles por defecto
+Everything the port generates lives next to the exe (or in `ZOMBIEWOOD_HOME` if you set that environment variable):
+`data/`, `saves/`, `saves_backup/`, `logs/`, `screens/`, `zombiewood.json`. To uninstall, delete the folder.
 
-El juego solo entiende toques y las teclas BACK/MENU de Android; el port traduce teclado y mando a toques virtuales.
+Headless: `zombiewood --install=<apk> [--obb=<main.obb> --obb=<patch.obb>] [--install-only]`; `--reinstall` reopens the wizard.
 
-| Acción | Teclado / ratón | Mando |
+### Updating without losing your progress
+
+Close the game and copy the **contents** of the new zip's `Zombiewood-Win64` folder over your game folder (*Replace the
+files in the destination*). The zip only contains the program: `saves/`, `data/` and `zombiewood.json` are never touched.
+
+### Moving your save to another PC
+
+Install the port and your APK on the new PC, launch it once, close it, and copy the contents of your old `saves/` folder
+into the new one. Saves are not tied to the machine.
+
+## Default controls
+
+The game only understands touches and the Android BACK/MENU keys; the port translates keyboard and gamepad input into
+virtual touches.
+
+| Action | Keyboard / mouse | Gamepad |
 |---|---|---|
-| Tocar (menús, botones) | clic izquierdo | — |
-| Mover | `W A S D` | stick izquierdo |
-| Apuntar y disparar | flechas, o mantener clic derecho | stick derecho |
-| Botiquín / arma / pausa / aceptar | `E` · `Q` · `P` · `Espacio` | `Y` · `RB`/`X` · `Start` · `A` |
-| Atrás / menú del juego | `Esc` · `Tab` | `Back`/`B` · `Guide` |
-| Menú del port · captura · pantalla completa | `F1` · `F12` · `F11` / `Alt+Enter` | — |
+| Tap (menus, buttons) | left click | — |
+| Move | `W A S D` | left stick |
+| Aim and shoot | arrow keys, or hold right click | right stick |
+| Medkit / weapon / pause / accept | `E` · `Q` · `P` · `Space` | `Y` · `RB`/`X` · `Start` · `A` |
+| Back / game menu | `Esc` · `Tab` | `Back`/`B` · `Guide` |
+| Port menu · screenshot · fullscreen | `F1` · `F12` · `F11` / `Alt+Enter` | — |
 
-Todo es remapeable desde **F1 → Controles** (botón *Cambiar* y pulsa una tecla o botón; *+* añade un segundo enlace).
-`gamecontrollerdb.txt` incluye mapeos SDL de mandos de Windows; puedes añadir los tuyos.
+Everything can be remapped from **F1 → Controles (Controls)** (*Cambiar* / Change, then press a key or button; *+* adds
+a second binding). `gamecontrollerdb.txt` includes SDL mappings for Windows gamepads; you can add your own.
 
-## Configuración
+## Configuration
 
-El menú **F1** (Zombiewood · Gráficos · Audio · Controles · Carpetas · Ayuda) guarda al instante en `zombiewood.json`:
-backend gráfico (D3D11 / OpenGL; pide reiniciar), resolución interna, filtrado, VSync, límite de FPS, pantalla completa,
-volúmenes, saltar vídeos, idioma (en, fr, de, es, it, pt, ja, ko, zh, ru; al reiniciar), zona muerta del mando, copias de
-seguridad, y el **cursor zombi** (on/off y tamaño 32/48/64/96 px; claves `cursor` y `cursor_size`). La referencia completa de claves, variables de entorno y opciones de línea de comandos está en
+The **F1** menu (Zombiewood · Gráficos/Graphics · Audio · Controles/Controls · Carpetas/Folders · Ayuda/Help) saves
+instantly to `zombiewood.json`: graphics backend (D3D11 / OpenGL; requires a restart), internal resolution, filtering,
+VSync, FPS limit, fullscreen, volumes, skip videos, language (en, fr, de, es, it, pt, ja, ko, zh, ru; on restart),
+gamepad dead zone, backups, and the **zombie cursor** (on/off and size 32/48/64/96 px; keys `cursor` and
+`cursor_size`). The full reference of keys, environment variables and command-line options is in
 [`docs/BUILD.md`](docs/BUILD.md).
 
-Las partidas están en `saves/` y el port hace copias automáticas en `saves_backup/` (al arrancar y cada vez que el juego
-sobrescribe un save).
+Saves are stored in `saves/`, and the port makes automatic copies in `saves_backup/` (at startup and every time the game
+overwrites a save).
 
-## Problemas comunes
+## Troubleshooting
 
-| Síntoma | Qué hacer |
+| Symptom | What to do |
 |---|---|
-| Ventana negra / fallo gráfico | F1 → Gráficos → Backend = `gl` y reinicia (o `"backend": "gl"` en `zombiewood.json`). |
-| Faltan DLL (`VCRUNTIME`, `MSVCP140`) | Instala el *Microsoft Visual C++ Redistributable 2015-2022 x64*. |
-| Sin vídeos / logo | Windows N: instala el *Media Feature Pack*; o pon `"skip_videos": true`. |
-| El instalador avisa de SHA-256 distinto | Tu APK/OBB no es la 1.5.3 original; puede funcionar mal. |
-| Tirones | Quita VSync/prueba otro backend; `fps_limit` 0 = sin límite. Mira `logs/zombiewood.log`. |
-| El mando no responde | Comprueba que Windows lo ve; añade su mapeo a `gamecontrollerdb.txt`; remapea en F1. |
-| Mensajes "Sending TapJoy request… / Response not valid" en el log | Normal sin red; se resumen automáticamente. |
+| Black window / graphics glitch | F1 → Gráficos (Graphics) → Backend = `gl` and restart (or `"backend": "gl"` in `zombiewood.json`). |
+| Missing DLLs (`VCRUNTIME`, `MSVCP140`) | They ship in the zip; make sure you extracted every file. Otherwise install the *Microsoft Visual C++ Redistributable 2015-2022 x64*. |
+| No videos / logo | Windows N: install the *Media Feature Pack*; or set `"skip_videos": true`. |
+| The installer warns about a different SHA-256 | Your APK/OBB is not the original 1.5.3; it may misbehave. |
+| Stuttering | Disable VSync / try another backend; `fps_limit` 0 = unlimited. Check `logs/zombiewood.log`. |
+| The gamepad does not respond | Check that Windows sees it; add its mapping to `gamecontrollerdb.txt`; remap it in F1. |
+| "Sending TapJoy request… / Response not valid" messages in the log | Normal without a network; they are summarized automatically. |
 
-Si algo falla, adjunta `logs/zombiewood.log`. `ZW_TRACE_INPUT=1` traza la entrada.
+If something fails, attach `logs/zombiewood.log`. `ZW_TRACE_INPUT=1` traces input.
 
-## Probarlo en tu PC y reportar resultados
+## Testing it on your PC and reporting results
 
-Hasta ahora solo se ha probado en una PC (Windows 11, NVIDIA RTX 3060). Si lo pruebas en otra, abre un *issue* en el
-repositorio (o escribe al autor) con:
+So far it has only been tested on one PC (Windows 11, NVIDIA RTX 3060). If you try it on another one, open an *issue*
+in the repository with:
 
-1. Windows (versión/edición), CPU y GPU (`dxdiag` → pestaña Pantalla).
-2. Hasta dónde llegaste: asistente / instalación del APK / logo / intro / menú / partida, y los FPS (F1 → barra superior).
-3. ¿Se oye el audio? ¿Funcionan los vídeos? ¿Probaste un mando (cuál)?
-4. Si falla o se cierra: adjunta `logs\zombiewood.log` (junto al exe) y, si puedes, una captura (F12 → carpeta `screens\`).
+1. Windows (version/edition), CPU and GPU (`dxdiag` → Display tab).
+2. How far you got: wizard / APK installation / logo / intro / menu / gameplay, and the FPS (F1 → top bar).
+3. Can you hear the audio? Do the videos play? Did you try a gamepad (which one)?
+4. If it fails or closes: attach `logs\zombiewood.log` (next to the exe) and, if possible, a screenshot (F12 → `screens\` folder).
 
-Prueba rápida si no arranca: en `zombiewood.json` cambia `"backend": "d3d11"` por `"gl"` y vuelve a abrirlo.
+Quick fix if it does not start: in `zombiewood.json` change `"backend": "d3d11"` to `"gl"` and open it again.
 
-## Compilar desde el código
+## Building from source
 
-Ver [`docs/BUILD.md`](docs/BUILD.md) (VS 2022 Build Tools + vcpkg + preset `win-release`). Para generar el paquete:
-
-```powershell
-pwsh Zombiewood\tools\package.ps1 -Clean      # configura, compila, prueba y crea dist\Zombiewood-Win64-<versión>.zip
-```
-
-Documentación técnica: [`docs/PLAN.md`](docs/PLAN.md), [`docs/ANALYSIS.md`](docs/ANALYSIS.md) (análisis del APK),
-[`docs/CONTRACTS.md`](docs/CONTRACTS.md) (interfaces entre módulos), [`docs/QA.md`](docs/QA.md).
-
-### Icono de la aplicación (opcional)
-
-El icono no se versiona (es arte del juego). Para incrustarlo en `zombiewood.exe`, genera el `.ico` desde tu imagen antes de compilar:
+See [`docs/BUILD.md`](docs/BUILD.md) (VS 2022 Build Tools + vcpkg + `win-release` preset). To build the package:
 
 ```powershell
-pwsh tools/make_icon.ps1 -Source C:\ruta\a\tu\icono.jpg   # escribe resources/zombiewood.ico
+pwsh tools\package.ps1 -Clean      # configures, builds, tests and creates dist\Zombiewood-Win64-<version>.zip
 ```
 
-CMake lo detecta y lo usa como icono del exe (escritorio, Explorador, barra de tareas y ventana).
+Technical documentation: [`docs/PLAN.md`](docs/PLAN.md), [`docs/ANALYSIS.md`](docs/ANALYSIS.md) (APK analysis),
+[`docs/CONTRACTS.md`](docs/CONTRACTS.md) (interfaces between modules), [`docs/QA.md`](docs/QA.md).
 
-### Cursor del juego (opcional)
+### Application icon (optional)
 
-Igual que el icono, el cursor no se versiona. Para incrustarlo, genera el recurso desde un PNG con transparencia (usa la
-figura de la mitad izquierda de la imagen; `-Whole` para usar la imagen entera):
+The icon is not versioned (it is game art). To embed it in `zombiewood.exe`, generate the `.ico` from your image before building:
 
 ```powershell
-pwsh tools/make_cursor.ps1 -Source C:\ruta\a\cursor.png   # escribe resources/zombiewood_cursor.bin
+pwsh tools/make_icon.ps1 -Source C:\path\to\your\icon.jpg   # writes resources/zombiewood.ico
 ```
 
-Sin él, el juego usa el cursor normal de Windows.
+CMake detects it and uses it as the exe icon (desktop, Explorer, taskbar and window).
 
-## Historial de cambios
+### Game cursor (optional)
 
-Todas las versiones y mejoras están en [`CHANGELOG.md`](CHANGELOG.md). Descargas en la sección *Releases* del repositorio.
+Like the icon, the cursor is not versioned. To embed it, generate the resource from a PNG with transparency (it uses the
+figure in the left half of the image; `-Whole` uses the whole image):
 
-## Créditos y licencias de terceros
+```powershell
+pwsh tools/make_cursor.ps1 -Source C:\path\to\cursor.png   # writes resources/zombiewood_cursor.bin
+```
 
-El código propio de este repositorio es el runtime (cargador, HLE, frontend). Usa, sin modificar salvo donde se indica:
+Without it, the game uses the normal Windows cursor.
 
-| Componente | Uso | Licencia |
+## Changelog
+
+Every version and improvement is listed in [`CHANGELOG.md`](CHANGELOG.md). Downloads are in the repository's *Releases* section.
+
+## Credits and third-party licenses
+
+This repository's own code is the runtime (loader, HLE, frontend). It uses, unmodified except where noted:
+
+| Component | Used for | License |
 |---|---|---|
-| [SDL2](https://libsdl.org) | ventana, entrada, mandos, audio | zlib |
-| [ANGLE](https://chromium.googlesource.com/angle/angle) (vcpkg) | OpenGL ES 2/3 sobre Direct3D 11 / OpenGL | BSD de 3 cláusulas |
-| [dynarmic](https://github.com/azahar-emu/dynarmic) (fork de Azahar, commit `a466015`; parche local de *shadow space* en el manejador de excepciones) y sus externals (mcl, xbyak, Zydis/Zycore, fmt, robin-map, biscuit, oaknut) | recompilador JIT ARM32 → x64 | 0BSD (dynarmic); MIT/BSD los externals |
-| [Dear ImGui](https://github.com/ocornut/imgui) v1.91.9 | menú F1 y asistente | MIT |
-| [zlib](https://zlib.net) | descompresión del APK | zlib |
-| [nlohmann/json](https://github.com/nlohmann/json) | configuración | MIT |
-| [Boost](https://www.boost.org) (ICL, Variant; cabeceras) | requisito de dynarmic | Boost Software License |
-| [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) | mapeos de mandos (`gamecontrollerdb.txt`) | zlib |
-| Windows Media Foundation | vídeos H.264/AAC | componente del sistema |
+| [SDL2](https://libsdl.org) | window, input, gamepads, audio | zlib |
+| [ANGLE](https://chromium.googlesource.com/angle/angle) (vcpkg) | OpenGL ES 2/3 on Direct3D 11 / OpenGL | 3-clause BSD |
+| [dynarmic](https://github.com/azahar-emu/dynarmic) (Azahar fork, commit `a466015`; local *shadow space* patch in the exception handler) and its externals (mcl, xbyak, Zydis/Zycore, fmt, robin-map, biscuit, oaknut) | ARM32 → x64 JIT recompiler | 0BSD (dynarmic); MIT/BSD for the externals |
+| [Dear ImGui](https://github.com/ocornut/imgui) v1.91.9 | F1 menu and wizard | MIT |
+| [zlib](https://zlib.net) | APK decompression | zlib |
+| [nlohmann/json](https://github.com/nlohmann/json) | configuration | MIT |
+| [Boost](https://www.boost.org) (ICL, Variant; headers) | dynarmic dependency | Boost Software License |
+| [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) | gamepad mappings (`gamecontrollerdb.txt`) | zlib |
+| Windows Media Foundation | H.264/AAC videos | system component |
 
-Los textos de licencia completos viajan en `licenses/` dentro del zip. *Zombiewood* es propiedad de sus respectivos titulares
-(Gameloft / TechJ5 Games); este proyecto no está afiliado a ellos, no redistribuye su contenido y requiere una copia legítima.
+The full license texts ship in `licenses/` inside the zip. *Zombiewood* is the property of its respective owners
+(Gameloft / TechJ5 Games); this project is not affiliated with them, does not redistribute their content and requires a
+legitimate copy.
 
 ## Legal
 
-- **Licencia del proyecto:** el código y la documentación propios de este repositorio (runtime, herramientas y docs) se
-  publican bajo la [licencia MIT](LICENSE) — © 2026 ChrisDutary. Puedes usarlos, modificarlos y redistribuirlos
-  manteniendo el aviso de copyright; se entregan "tal cual", **sin garantía de ningún tipo**.
-- **El juego no es parte del proyecto:** *Zombiewood*, su nombre, logotipos, gráficos, sonidos, vídeos, código y datos son
-  propiedad de Gameloft y de sus respectivos titulares. Este repositorio y sus descargas **no incluyen** ningún contenido
-  del juego; cada usuario debe aportar su propia copia legítima. La licencia MIT **no** se aplica a ese contenido.
-- **Sin afiliación:** este es un proyecto independiente y sin ánimo de lucro, sin relación con Gameloft ni respaldado por
-  ella. Todas las marcas pertenecen a sus dueños.
-- **Arte de terceros:** el icono y el cursor que puede incrustar el ejecutable pertenecen a sus autores y no están cubiertos
-  por la licencia MIT. Las bibliotecas usadas mantienen sus propias licencias (ver la tabla anterior y `licenses/`).
-- Si eres titular de algún derecho y quieres que se retire algo, abre un *issue* en el repositorio y se atenderá.
+- **Project license:** this repository's own code and documentation (runtime, tools and docs) are released under the
+  [MIT license](LICENSE) — © 2026 ChrisDutary. You may use, modify and redistribute them as long as you keep the
+  copyright notice; they are provided "as is", **without warranty of any kind**.
+- **The game is not part of the project:** *Zombiewood*, its name, logos, graphics, sounds, videos, code and data are the
+  property of Gameloft and their respective owners. This repository and its downloads **do not include** any game
+  content; every user must provide their own legitimate copy. The MIT license does **not** apply to that content.
+- **No affiliation:** this is an independent, non-profit project, not related to or endorsed by Gameloft. All
+  trademarks belong to their owners.
+- **Third-party art:** the icon and cursor the executable may embed belong to their authors and are not covered by the
+  MIT license. The libraries used keep their own licenses (see the table above and `licenses/`).
+- If you hold any rights and want something removed, open an *issue* in the repository and it will be handled.

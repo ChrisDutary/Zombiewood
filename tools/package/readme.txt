@@ -1,35 +1,40 @@
-ZOMBIEWOOD para Windows (port nativo) - version @VERSION@
-=========================================================
+ZOMBIEWOOD for Windows (native port) - version @VERSION@
+========================================================
 
-Este paquete NO incluye el juego. Necesitas tu propia copia legitima de
-Zombiewood 1.5.3 (APK de Android de Gameloft/TechJ5, paquete
-techj5gameszombiew153). Zombiewood se ejecuta cargando los ficheros de ese
-APK; nada de el se redistribuye aqui.
+This package does NOT include the game. You need your own legitimate copy of
+Zombiewood 1.5.3 (Android APK by Gameloft/TechJ5, package
+techj5gameszombiew153). Zombiewood runs by loading the files from that APK;
+nothing from it is redistributed here.
 
-REQUISITOS
-- Windows 10/11 de 64 bits, GPU con soporte Direct3D 11.
-- Windows N/KN: instala el "Media Feature Pack" (si no, los videos se saltan).
-- Tu APK (el "grande" con archiveObbCache, o el APK + los OBB main/patch).
+REQUIREMENTS
+- Windows 10/11 64-bit, a GPU with Direct3D 11 support.
+- Windows N/KN: install the "Media Feature Pack" (otherwise videos are skipped).
+- Your APK (the "big" one with archiveObbCache, or the APK + the main/patch OBBs).
 
-INSTALACION
-1. Descomprime esta carpeta donde quieras (con permiso de escritura; no uses
-   "Archivos de programa").
-2. Ejecuta zombiewood.exe. Al no haber datos aparece un asistente:
-   "Elegir APK... (Enter)" -> selecciona tu APK. Tarda unos segundos.
-3. "Jugar (Enter)".
-Todo lo que se crea (data/, saves/, saves_backup/, logs/, zombiewood.json)
-queda junto al exe. Para borrar el juego, borra la carpeta.
+INSTALLATION
+1. Extract this folder anywhere you can write to (do not use
+   "Program Files").
+2. Run zombiewood.exe. Since there is no data yet, a wizard appears:
+   "Elegir APK... (Enter)" (Choose APK) -> select your APK. It takes a few seconds.
+3. "Jugar (Enter)" (Play).
+Everything that gets created (data/, saves/, saves_backup/, logs/, zombiewood.json)
+stays next to the exe. To remove the game, delete the folder.
 
-CONTROLES POR DEFECTO
-  Mover: W A S D            Apuntar/disparar: flechas, o clic derecho
-  Botiquin: E   Arma: Q   Pausa: P   Aceptar (>>): Espacio
-  Atras: Esc   Menu del juego: Tab   Menu del port: F1
-  Captura: F12   Pantalla completa: F11 o Alt+Enter
-  Mando: sticks, A/B/X/Y, RB, Start, Back (remapeable en F1 > Controles)
+UPDATING
+Close the game and copy the new version's files over this folder
+(replace files). Your saves, data and settings are not touched.
 
-PROBLEMAS
-- Problemas graficos: F1 > Graficos > Backend = "gl" (OpenGL), y reinicia.
-- Si algo falla, revisa la carpeta logs (zombiewood.log).
-- Tus partidas estan en saves\; hay copias automaticas en saves_backup\.
+DEFAULT CONTROLS
+  Move: W A S D             Aim/shoot: arrow keys, or right click
+  Medkit: E   Weapon: Q   Pause: P   Accept (>>): Space
+  Back: Esc   Game menu: Tab   Port menu: F1
+  Screenshot: F12   Fullscreen: F11 or Alt+Enter
+  Gamepad: sticks, A/B/X/Y, RB, Start, Back (remappable in F1 > Controles)
 
-Documentacion completa, configuracion y licencias: README.md y licenses\.
+TROUBLESHOOTING
+- Graphics problems: F1 > Graficos > Backend = "gl" (OpenGL), then restart.
+- If something fails, check the logs folder (zombiewood.log).
+- Your saves are in saves\; automatic copies are kept in saves_backup\.
+
+Full documentation, configuration and licenses: README.md, LICENSE.txt and licenses\.
+(The port menu is currently in Spanish.)

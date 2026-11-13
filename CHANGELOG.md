@@ -1,64 +1,67 @@
-# Changelog — Zombiewood para Windows
+# Changelog — Zombiewood for Windows
 
-Todas las mejoras y cambios del port se documentan aquí. Formato basado en
-[Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); versiones con [SemVer](https://semver.org/lang/es/).
-Cada versión se publica como release en [GitHub](https://github.com/ChrisDutary/Zombiewood/releases) con el tag `vX.Y.Z` y su zip
-`Zombiewood-Win64-X.Y.Z.zip`.
+Every improvement and change to the port is documented here. Format based on
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
+Each version is published as a release on [GitHub](https://github.com/ChrisDutary/Zombiewood/releases) with the tag
+`vX.Y.Z` and its zip `Zombiewood-Win64-X.Y.Z.zip`.
 
-**Actualizar sin perder tu partida:** cierra el juego y copia el contenido del zip nuevo encima de tu carpeta
-(reemplazar archivos). El zip solo trae el programa; `saves/`, `data/` y `zombiewood.json` no se tocan.
+**Updating without losing your progress:** close the game and copy the contents of the new zip over your folder
+(replace files). The zip only contains the program; `saves/`, `data/` and `zombiewood.json` are never touched.
 
-## [Sin publicar]
+## [Unreleased]
 
-Cambios ya en `main` que saldrán en la próxima versión.
+Changes already on `main` that will ship in the next version.
 
-### Añadido
-- **Licencia MIT** (`LICENSE`, © 2026 ChrisDutary) para el código y la documentación propios del proyecto. El zip la
-  incluirá como `LICENSE.txt`.
-- Sección **Legal** en el README: el juego y su contenido son de Gameloft y no están cubiertos por la licencia; proyecto
-  sin afiliación; arte de terceros (icono/cursor) fuera de la licencia; vía de contacto para retiradas.
+### Added
+- **MIT license** (`LICENSE`, © 2026 ChrisDutary) for the project's own code and documentation. The zip will include
+  it as `LICENSE.txt`.
+- **Legal** section in the README: the game and its content belong to Gameloft and are not covered by the license; the
+  project is unaffiliated; third-party art (icon/cursor) is outside the license; contact route for takedown requests.
+- **English documentation:** `README.md` is now in English with a Spanish copy in `README.es.md` (linked from both);
+  this changelog, everything under `docs/` and the zip's `readme.txt` were translated to English.
+- README sections on updating without losing your progress and moving your save to another PC.
 
-## Repositorio
+## Repository
 
-- 2026-11-13: el proyecto se mudó a su propio repositorio público [ChrisDutary/Zombiewood](https://github.com/ChrisDutary/Zombiewood)
-  con todo su historial (antes vivía en la carpeta `Zombiewood/` de un repositorio de la universidad). Las releases
-  0.1.0 y 0.2.0 se volvieron a publicar aquí con los mismos zips; los tags pasan a llamarse `v0.1.0` y `v0.2.0`.
+- 2026-11-13: the project moved to its own public repository, [ChrisDutary/Zombiewood](https://github.com/ChrisDutary/Zombiewood),
+  with its full history (it previously lived in the `Zombiewood/` folder of a university repository). Releases 0.1.0
+  and 0.2.0 were republished here with the same zips; the tags are now named `v0.1.0` and `v0.2.0`.
 
 ## [0.2.0] — 2026-11-13
 
-### Añadido
-- **Cursor zombi** (flecha con ojo) en lugar de la flecha de Windows, en el juego, el asistente y el menú F1.
-  Es el puntero del sistema (no lo dibuja el juego): no afecta a FPS ni a la lógica del juego.
-- Opciones en **F1 → Gráficos**: *Cursor zombi* (on/off) y *Tamaño del cursor* (32 / 48 / 64 / 96 px).
-  Claves nuevas en `zombiewood.json`: `"cursor": "zombie" | "system"` y `"cursor_size": 48`.
-- `tools/make_cursor.ps1`: genera el cursor (`resources/zombiewood_cursor.bin`, incrustado en el exe como recurso)
-  desde una imagen PNG con transparencia; recorta la figura y calcula la punta como punto de clic.
-- Este `CHANGELOG.md`.
+### Added
+- **Zombie cursor** (an arrow with an eye) instead of the Windows arrow, in the game, the wizard and the F1 menu.
+  It is the system pointer (the game does not draw it), so it does not affect FPS or game logic.
+- Options in **F1 → Gráficos (Graphics)**: *Cursor zombi* (on/off) and *Tamaño del cursor* (cursor size: 32 / 48 / 64 / 96 px).
+  New keys in `zombiewood.json`: `"cursor": "zombie" | "system"` and `"cursor_size": 48`.
+- `tools/make_cursor.ps1`: generates the cursor (`resources/zombiewood_cursor.bin`, embedded in the exe as a resource)
+  from a PNG image with transparency; it crops the figure and uses the tip as the click point.
+- This `CHANGELOG.md`.
 
-### Cambiado
-- El paquete incluye el runtime de Visual C++ (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`) para que el
-  juego abra en PCs sin el *VC++ Redistributable* (ya venía en el zip de 0.1.0 publicado; ahora queda documentado).
-- `tools/package.ps1` se niega a regenerar la carpeta de staging si contiene `data/`, `saves/` o `zombiewood.json`
-  (evita borrar una partida si alguien jugó desde `dist\Zombiewood-Win64`).
-- Guía de instalación del README: descarga desde Releases, aviso de SmartScreen y sección para reportar pruebas en otras PCs.
+### Changed
+- The package includes the Visual C++ runtime (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`) so the game
+  opens on PCs without the *VC++ Redistributable* (already in the published 0.1.0 zip; now documented).
+- `tools/package.ps1` refuses to regenerate the staging folder if it contains `data/`, `saves/` or `zombiewood.json`
+  (prevents wiping a save if someone played from `dist\Zombiewood-Win64`).
+- README installation guide: download from Releases, SmartScreen notice and a section for reporting tests on other PCs.
 
-### Notas
-- El cursor y el icono son arte de terceros y no se versionan; se incrustan en el exe del release.
-- Sin cambios en el núcleo (CPU/loader/HLE): las partidas de 0.1.0 siguen funcionando igual.
+### Notes
+- The cursor and icon are third-party art and are not versioned; they are embedded in the release exe.
+- No changes to the core (CPU/loader/HLE): 0.1.0 saves keep working the same.
 
 ## [0.1.0] — 2026-11-13
 
-Primera versión jugable.
+First playable version.
 
-### Añadido
-- Runtime completo: cargador ELF ARM + JIT dynarmic + HLE de Android (libc/pthread de bionic, OpenGL ES → ANGLE/D3D11,
-  audio AudioTrack → SDL2, JNI y clases Java emuladas).
-- Instalador de primer arranque desde el APK del usuario (verifica SHA-256 de la versión 1.5.3).
-- Menú F1 estilo Ship of Harkinian (gráficos, audio, controles con remapeo, carpetas, ayuda).
-- Vídeos del juego con Media Foundation, copias de seguridad de saves, logs rotativos.
-- Controles: ratón como toques, WASD/flechas y mando como toques virtuales sobre el HUD.
-- Icono de la aplicación.
+### Added
+- Complete runtime: ARM ELF loader + dynarmic JIT + Android HLE (bionic libc/pthread, OpenGL ES → ANGLE/D3D11,
+  AudioTrack audio → SDL2, JNI and emulated Java classes).
+- First-run installer from the user's APK (verifies the SHA-256 hashes of version 1.5.3).
+- F1 menu in the style of Ship of Harkinian (graphics, audio, controls with remapping, folders, help).
+- Game videos via Media Foundation, save backups, rotating logs.
+- Controls: mouse as touches; WASD/arrow keys and gamepad as virtual touches on the HUD.
+- Application icon.
 
-### Conocido
-- En partida, Esc a veces necesita dos pulsaciones.
-- Sin probar: mando físico, escenas 2+, otras GPUs. Servicios online (tienda, TapJoy, Facebook) no disponibles.
+### Known issues
+- In-game, Esc sometimes needs two presses.
+- Untested: physical gamepad, scenes 2+, other GPUs. Online services (store, TapJoy, Facebook) are unavailable.
