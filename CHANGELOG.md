@@ -10,7 +10,11 @@ Each version is published as a release on [GitHub](https://github.com/ChrisDutar
 
 ## [Unreleased]
 
-Changes already on `main` that will ship in the next version.
+Nothing yet.
+
+## [0.2.1] — 2026-11-13
+
+Documentation and licensing release; the game runtime is unchanged (0.2.0 saves and settings keep working).
 
 ### Added
 - **MIT license** (`LICENSE`, © 2026 ChrisDutary) for the project's own code and documentation. The zip will include
@@ -20,6 +24,11 @@ Changes already on `main` that will ship in the next version.
 - **English documentation:** `README.md` is now in English with a Spanish copy in `README.es.md` (linked from both);
   this changelog, everything under `docs/` and the zip's `readme.txt` were translated to English.
 - README sections on updating without losing your progress and moving your save to another PC.
+
+### Changed
+- The zip now ships `LICENSE.txt`, and its `readme.txt` is in English.
+- Task specs in `docs/tasks/` renamed to English file names (`T1-analysis.md`, `T2-skeleton.md`, `T8-integration.md`).
+- First build from the dedicated repository (clean build, same pinned dependencies).
 
 ## Repository
 
