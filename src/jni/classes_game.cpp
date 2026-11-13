@@ -501,7 +501,7 @@ void RegisterGameClasses() {
       .Static("GetBundleData", "()Landroid/os/Bundle;", RetNull())
       .Static("IsDontDisturbEnable", "()Z", RetInt(0))
       .Static("GetRegistrationID", kS, RetConst(""))
-      .StaticNoop({{"ResetNotificationStatus", kV}, {"SetEnable", "(Z)V"}, {"CancelAll", kV}, {"SetDontDisturbEnable", "(Z)V"}});
+      .StaticNoop({{"ResetNotificationStatus", kV}, {"SetEnable", "(Z)V"}, {"CancelAll", kV}, {"CancelAll", "(Z)V"}, {"SetDontDisturbEnable", "(Z)V"}});
 
   // ---- Welcome screen / browser / ads ----
   DefineClass(P("SplashScreenActivity"))

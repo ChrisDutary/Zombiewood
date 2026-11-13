@@ -108,6 +108,22 @@ int main(int argc, char** argv) {
     }
   }
 
+  Out("== valores copiados por Game.nativeInit (globales del juego) ==");
+  for (const char* g : {"GetPhoneManufacturerPointer", "GetPhoneModelPointer", "GetPhoneGPUNamePointer", "GetPhoneCPUNamePointer",
+                        "GetSDFolderPathPointer", "GetSaveFolderPathPointer", "GetIMEIPointer"}) {
+    const gaddr fn = loader::FindSymbol(g);
+    if (!fn) {
+      Out("  {}: (no exportado)", g);
+      continue;
+    }
+    try {
+      const gaddr p = call_guest<gaddr>(fn);
+      Out("  {}() -> \"{}\"", g, p ? mem::ReadCStr(p, 512) : std::string("<null>"));
+    } catch (const std::exception& e) {
+      Out("  {}: {}", g, e.what());
+    }
+  }
+
   Out("== cobertura JNI (cada FindClass/Get*ID pedido por el juego) ==");
   std::printf("%s", jni::CoverageReport().c_str());
 

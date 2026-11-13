@@ -504,3 +504,48 @@ int s = t.play_state();                        // kStateStopped=1, kStatePaused=
   `SL_IID_PLAY`, `SL_IID_BUFFERQUEUE` (variables puntero a `SLInterfaceID_` de 16 bytes con los GUID reales) y registra
   `slCreateEngine`, que devuelve `SL_RESULT_FEATURE_UNSUPPORTED` (12) y pone `*pEngine = NULL`. El juego usa `AudioTrack`
   (`s_androidAPILevel = 3`), así que OpenSL es camino muerto.
+
+## JNI (T7) — `jni/jni.h`, `jni/java.h`
+
+`target_link_libraries(... zw_jni)` (arrastra `zw_cpu` + `zw_loader`). `zw::jni::Register()` es idempotente; llamarla tras
+`GuestMemory::Init()` y antes de `loader::Load()`.
+
+| API | Uso |
+|---|---|
+| `jni::JavaVM()` / `jni::Env()` | `JavaVM*` guest (para `CallJniOnLoad`) / `JNIEnv*` del hilo actual. `GetEnv` y `AttachCurrentThread` devuelven siempre 0 + un `JNIEnv` por hilo; `DetachCurrentThread` libera las refs locales del hilo |
+| `jni::call_native<R>(nombre, args…)` | llama a `Java_…` con `(JNIEnv*, jclass, args…)` en el hilo actual (reentrante). `nombre`: simbolo completo, relativo al paquete (`"Game_nativeInit"`, `"GLUtils_SUtils_nativeInit"`) o `"clase/x.metodo"` si vino de `RegisterNatives`. `std::string`/`const char*` → `jstring`. Marco local propio (las refs creadas se liberan al volver). Lanza `std::runtime_error` si no existe; `GuestFault/GuestExit` se propagan |
+| `jni::call_native_obj<R>(nombre, self, …)` | igual para nativos de instancia |
+| `jni::config()` | valores del "dispositivo" (rutas guest, OBB, modelo, GPU `"Adreno (TM) 330"`, idioma, pantalla 1280×720, `prefs_file` para persistir `SUtils.nativeSet/GetPreference`, `assets_dir`). Cambiar **antes** de `Game.nativeInit` (copia las cadenas) |
+| `jni::hooks()` | callbacks al frontend: `create_view` (por defecto llama `GameRenderer.nativeInit(0, screen_w, screen_h, "1.5.3")`), `set_view_settings`, `set_current_context` (def. `true`), `exit` (def. `throw GuestExit{0}`), `play_cinematic` (def. no-op = vídeo saltado), `open_browser`, `keep_screen_on`, `send_to_background`, `show_screen` |
+| `jni::SetAudioTrackBackend(factory)` | `android/media/AudioTrack` delega en un `jni::AudioTrackBackend` (misma forma que `zw::audio::Track` de T6). Por defecto: backend nulo que consume a tiempo real |
+| `jni::Coverage()` / `CoverageReport()` | cada `FindClass`/`Get*ID` pedido por el juego y si está emulado; métodos llamados sin implementación (log `[jni] metodo NO implementado: Clase.metodo(firma)` una vez, retorno 0/null) |
+| `jni::DefineClass(nombre).Static/Virtual/Ctor/StaticField/InstanceField(...)` (`java.h`) | añadir o sustituir métodos Java emulados desde otro módulo |
+
+Adaptador T6 → T7 (T8, ~10 líneas):
+
+```cpp
+struct SdlTrack final : zw::jni::AudioTrackBackend {
+  zw::audio::Track t;
+  SdlTrack(int s, int r, int c, int e, int b, int m) : t(s, r, c, e, b, m) {}
+  void Play() override { t.play(); }   void Pause() override { t.pause(); }
+  void Stop() override { t.stop(); }   void Release() override { t.release(); }
+  int Write(const void* p, int n) override { return t.write(p, n); }
+  int PlayState() const override { return t.play_state(); }
+};
+zw::jni::SetAudioTrackBackend([](int s, int r, int c, int e, int b, int m) { return std::make_unique<SdlTrack>(s, r, c, e, b, m); });
+```
+
+Modelo: `jobject` = handle `(índice << 2) | tipo` (1 local, 2 global, 3 débil = `GetObjectRefType`); `jmethodID`/`jfieldID` = valores
+opacos en `0x0A…`/`0x0B…` (zona nula: si el guest los desreferencia, falla visible). Arrays primitivos viven en memoria guest
+(`Get*ArrayElements`/`GetPrimitiveArrayCritical` devuelven el puntero directo, `isCopy = 0`). Sin excepciones Java:
+`ExceptionCheck/Occurred` = 0, `Throw*` se registra y se ignora. Clase o método desconocidos: `FindClass`/`Get*ID` nunca devuelven
+0 con un `jclass` válido (ANALYSIS R9).
+
+Diagnóstico: `zw_jni_loadonly <libZombieWood.so> [--no-extra] [--trace-calls]` ejecuta `.init_array`, `JNI_OnLoad`,
+`nativeSetGPUInfo`, `GL2JNILib.init` (→ `createView` → `GameRenderer.nativeInit`), `Game.nativeInit` y los `nativeInit` opcionales
+con el JNI real, y lista la cobertura.
+
+**Pendiente para T8 (`--load-only` del frontend):** `loader::RunLoadOnly` usa el `bootstrap::FakeJavaVM()` de T3. Para que
+`zombiewood --load-only` use el JNI de T7 basta con (a) añadir a `RunLoadOnly` un parámetro `gaddr java_vm = 0` y usar
+`java_vm ? java_vm : bootstrap::FakeJavaVM()`, y (b) en `main.cpp`: `zw::jni::Register(); return zw::loader::RunLoadOnly(libs,
+zw::jni::JavaVM());`.
