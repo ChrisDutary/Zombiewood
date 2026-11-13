@@ -14,7 +14,8 @@
 .PARAMETER SkipTests
   No ejecuta ctest.
 
-El paquete NO contiene datos del juego: solo zombiewood.exe, SDL2.dll, libEGL.dll, libGLESv2.dll, z.dll,
+El paquete NO contiene datos del juego: solo zombiewood.exe, SDL2.dll, libEGL.dll, libGLESv2.dll, z.dll, el runtime
+de VC++ (msvcp140/vcruntime140/vcruntime140_1),
 gamecontrollerdb.txt, readme.txt y licencias de terceros.
 #>
 [CmdletBinding()]
@@ -79,6 +80,15 @@ if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage | Out-Null
 foreach ($f in $files) { Copy-Item (Join-Path $exeDir $f) $stage }
 Copy-Item (Join-Path $pkgSrc 'gamecontrollerdb.txt') $stage
+
+# Runtime de Visual C++ (app-local, redistribuible por Microsoft): sin esto el exe no abre en PCs sin el VC++ Redist.
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$vsPath  = & $vswhere -products * -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+$crt = Get-ChildItem (Join-Path $vsPath 'VC\Redist\MSVC\*\x64\Microsoft.VC14*.CRT') -Directory -ErrorAction SilentlyContinue |
+       Sort-Object FullName | Select-Object -Last 1
+if (-not $crt) { throw "No encontre VC\Redist\MSVC\*\x64\Microsoft.VC14x.CRT en $vsPath" }
+foreach ($d in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') { Copy-Item (Join-Path $crt.FullName $d) $stage }
+Write-Host "   CRT de VC++ desde $($crt.FullName)"
 (Get-Content (Join-Path $pkgSrc 'readme.txt') -Raw).Replace('@VERSION@', $version) | Set-Content -Encoding UTF8 (Join-Path $stage 'readme.txt')
 
 # Licencias de terceros (vcpkg share/*/copyright + LICENSE de los FetchContent)

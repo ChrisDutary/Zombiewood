@@ -29,10 +29,14 @@ probado y lo no probado: mando físico y escenas 2+ sin probar). Sin conexión: 
 
 ## Instalación
 
-1. Descarga `Zombiewood-Win64-<versión>.zip` y descomprímelo en una carpeta con permiso de escritura
-   (no en `Archivos de programa`). Contiene `zombiewood.exe`, `SDL2.dll`, `libEGL.dll`, `libGLESv2.dll`, `z.dll`,
-   `gamecontrollerdb.txt`, `readme.txt` y `licenses/`.
-2. Ejecuta `zombiewood.exe`. Como aún no hay datos, aparece el asistente de primer arranque dentro de la ventana.
+1. Descarga `Zombiewood-Win64-<versión>.zip` desde la sección **Releases** del repositorio
+   ([última versión](https://github.com/ChrisDutary/2026-1GS242-Dutary-Christian/releases?q=zombiewood)) y descomprímelo
+   en una carpeta con permiso de escritura (p. ej. `C:\Juegos\Zombiewood`, **no** en `Archivos de programa` ni dentro del
+   zip). Contiene `zombiewood.exe`, `SDL2.dll`, `libEGL.dll`, `libGLESv2.dll`, `z.dll`, el runtime de Visual C++
+   (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`), `gamecontrollerdb.txt`, `readme.txt` y `licenses/`.
+   Opcional: comprueba el SHA-256 publicado junto al zip (`Get-FileHash .\Zombiewood-Win64-<versión>.zip`).
+2. Ejecuta `zombiewood.exe`. El exe no está firmado: si Windows SmartScreen muestra *"Windows protegió tu PC"*, pulsa
+   **Más información → Ejecutar de todas formas**. Como aún no hay datos, aparece el asistente de primer arranque dentro de la ventana.
 3. **Elegir APK… (Enter)** → selecciona tu APK. Se extrae en streaming a `data/` (unos segundos en un SSD), se verifican los
    SHA-256 y se escribe `zombiewood.json`.
 4. **Jugar (Enter)**. Verás el logo, la intro (cualquier tecla la salta) y el juego.
@@ -82,6 +86,18 @@ sobrescribe un save).
 | Mensajes "Sending TapJoy request… / Response not valid" en el log | Normal sin red; se resumen automáticamente. |
 
 Si algo falla, adjunta `logs/zombiewood.log`. `ZW_TRACE_INPUT=1` traza la entrada.
+
+## Probarlo en tu PC y reportar resultados
+
+Hasta ahora solo se ha probado en una PC (Windows 11, NVIDIA RTX 3060). Si lo pruebas en otra, abre un *issue* en el
+repositorio (o escribe al autor) con:
+
+1. Windows (versión/edición), CPU y GPU (`dxdiag` → pestaña Pantalla).
+2. Hasta dónde llegaste: asistente / instalación del APK / logo / intro / menú / partida, y los FPS (F1 → barra superior).
+3. ¿Se oye el audio? ¿Funcionan los vídeos? ¿Probaste un mando (cuál)?
+4. Si falla o se cierra: adjunta `logs\zombiewood.log` (junto al exe) y, si puedes, una captura (F12 → carpeta `screens\`).
+
+Prueba rápida si no arranca: en `zombiewood.json` cambia `"backend": "d3d11"` por `"gl"` y vuelve a abrirlo.
 
 ## Compilar desde el código
 

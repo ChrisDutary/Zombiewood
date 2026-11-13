@@ -30,3 +30,7 @@ saves/
 logs/
 zombiewood.json
 imgui.ini
+
+# Paquetes de release (se publican como asset en GitHub Releases, no en git)
+*.zip
+*.zip.sha256
