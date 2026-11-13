@@ -11,6 +11,7 @@ struct GameOptions {
   std::filesystem::path control;  // --control=<fichero>: igual, pero se leen las lineas que se van anadiendo
   int shot_every = 0;             // --shot-every=N: captura automatica cada N frames
   bool no_audio = false;          // --no-audio: AudioTrack nulo
+  bool uncapped = false;          // --uncapped: sin vsync ni limite de fps (medir rendimiento)
   bool hidden = false;            // --hidden: ventana oculta (pruebas automaticas)
 };
 

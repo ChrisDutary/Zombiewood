@@ -4,7 +4,7 @@
 // keycodes Android que entiende (BACK = 4, MENU = 82, en key-up).
 //
 // Mapa configurable en zombiewood.json, objeto "input" (se fusiona sobre los valores por defecto;
-// ver DefaultConfig() en input.cpp y docs/INPUT.md). Coordenadas normalizadas: x en [0,1] del ancho,
+// ver DefaultConfig() en input.cpp y docs/BUILD.md). Coordenadas normalizadas: x en [0,1] del ancho,
 // y en [0,1] del alto de la resolucion interna; "radius" en fracciones del alto.
 #pragma once
 #include <functional>
@@ -85,8 +85,8 @@ class Mapper {
   std::vector<Button> buttons_;
   std::vector<AndroidKey> android_keys_;
   // raton
-  bool mouse_left_ = false, mouse_left_sent_ = false, mouse_aim_ = false;
-  int mouse_x_ = 0, mouse_y_ = 0, mouse_sent_x_ = -1, mouse_sent_y_ = -1;
+  bool mouse_left_ = false, mouse_aim_ = false;
+  int mouse_x_ = 0, mouse_y_ = 0;
   struct MouseEv {
     int action, x, y;
   };

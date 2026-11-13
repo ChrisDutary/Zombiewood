@@ -71,15 +71,34 @@ void PostUser(int code) {
   SDL_PushEvent(&e);
 }
 
+// Estadisticas de audio para el log (bytes PCM entregados por Vox y pico de amplitud).
+std::atomic<std::uint64_t> g_audio_bytes{0};
+std::atomic<int> g_audio_peak{0};
+std::FILE* g_audio_dump = nullptr;  // ZW_AUDIO_DUMP=<fichero>: PCM crudo que Vox escribe en AudioTrack (diagnostico)
+
 // T6 -> T7: android.media.AudioTrack sobre SDL.
 struct SdlTrack final : jni::AudioTrackBackend {
   audio::Track t;
-  SdlTrack(int s, int r, int c, int e, int b, int m) : t(s, r, c, e, b, m) {}
+  bool pcm16;
+  SdlTrack(int s, int r, int c, int e, int b, int m) : t(s, r, c, e, b, m), pcm16(e == audio::kEncodingPcm16) {
+    log::Info("audio: pista {} Hz, {} canales, {} -> {}", r, c == audio::kChannelOutStereo ? 2 : 1, pcm16 ? "PCM16" : "PCM8",
+              t.has_device() ? "dispositivo SDL" : "SIN dispositivo (se descarta a tiempo real)");
+  }
   void Play() override { t.play(); }
   void Pause() override { t.pause(); }
   void Stop() override { t.stop(); }
   void Release() override { t.release(); }
-  int Write(const void* p, int n) override { return t.write(p, n); }
+  int Write(const void* p, int n) override {
+    if (pcm16 && n > 1) {
+      const auto* smp = static_cast<const std::int16_t*>(p);
+      int peak = g_audio_peak.load(std::memory_order_relaxed);
+      for (int i = 0; i < n / 2; i += 8) peak = std::max(peak, std::abs(static_cast<int>(smp[i])));
+      g_audio_peak.store(peak, std::memory_order_relaxed);
+    }
+    g_audio_bytes += static_cast<std::uint64_t>(n > 0 ? n : 0);
+    if (g_audio_dump && n > 0) std::fwrite(p, 1, static_cast<std::size_t>(n), g_audio_dump);
+    return t.write(p, n);
+  }
   int PlayState() const override { return t.play_state(); }
 };
 
@@ -125,6 +144,10 @@ Settings LoadSettings(const GameOptions& opt) {
   s.linear_filter = ConfigGet(cfg, "linear_filter", true);
   s.language = ConfigGet(cfg, "language", 0);
   if (cfg.contains("input")) s.input = cfg["input"];
+  if (opt.uncapped) {
+    s.vsync = false;
+    s.fps_limit = 0;
+  }
   s.internal_w = std::clamp(s.internal_w, 320, 4096);
   s.internal_h = std::clamp(s.internal_h, 240, 4096);
   return s;
@@ -417,14 +440,17 @@ class GlThread {
   // Comandos de prueba (--script / --control). Coordenadas en pixeles internos.
   //   wait <frames> | tap <x> <y> [frames] | down|move|up <id> <x> <y> | key <keycode Android>
   //   sdlkey <nombre SDL> down|up | pad <boton> down|up | axis <eje> <valor> | shot [nombre]
+  //   mouse <left|right> <down|up> <x> <y> | mousemove <x> <y>
   //   pause | resume | resize <w> <h> | quit | # comentario
   void ExecCommand(const std::string& line) {
     std::istringstream ss(line);
     std::string cmd;
     if (!(ss >> cmd) || cmd[0] == '#') return;
     log::Info("[script] {}", line);
-    if (cmd == "wait") {
-      ss >> wait_frames_;
+    if (cmd == "wait") {  // en "frames" de 1/60 s (tiempo real: no depende de los fps)
+      int n = 0;
+      ss >> n;
+      wait_until_ = Clock::now() + std::chrono::microseconds(16667LL * std::max(0, n));
     } else if (cmd == "tap") {
       int x = 0, y = 0, n = 4;
       ss >> x >> y >> n;
@@ -456,6 +482,15 @@ class GlThread {
       float v = 0;
       ss >> a >> v;
       mapper_.PadAxis(SDL_GameControllerGetAxisFromString(a.c_str()), v);
+    } else if (cmd == "mouse") {  // mouse <left|right> <down|up> <x> <y>
+      std::string b, st;
+      int x = 0, y = 0;
+      ss >> b >> st >> x >> y;
+      mapper_.MouseButton(b == "right" ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT, st != "up", x, y);
+    } else if (cmd == "mousemove") {
+      int x = 0, y = 0;
+      ss >> x >> y;
+      mapper_.MouseMove(x, y);
     } else if (cmd == "shot") {
       std::string name;
       ss >> name;
@@ -497,16 +532,12 @@ class GlThread {
 
   void RunCommands() {
     PollControl();
-    if (wait_frames_ > 0) {
-      --wait_frames_;
-      return;
-    }
-    while (!cmds_.empty() && wait_frames_ <= 0 && !quit_) {
+    if (Clock::now() < wait_until_) return;
+    while (!cmds_.empty() && Clock::now() >= wait_until_ && !quit_) {
       const std::string l = cmds_.front();
       cmds_.pop_front();
       ExecCommand(l);
     }
-    if (cmds_.empty() && script_quit_when_done_ && wait_frames_ <= 0) quit_ = true;
   }
 
   void Loop() {
@@ -546,9 +577,12 @@ class GlThread {
       const double el = std::chrono::duration<double>(Clock::now() - stat_t0).count();
       if (el >= 5.0 || (frame_ <= 3)) {
         const double fps = stat_frames / std::max(el, 1e-6);
-        if (frame_ > 3)
-          log::Info("fps {:.1f} (frame {}; step medio {:.2f} ms, max {:.2f} ms; hilos guest {})", fps, frame_,
-                    stat_step / stat_frames, stat_step_max, threads::Count());
+        if (frame_ > 3) {
+          const std::uint64_t ab = g_audio_bytes.exchange(0);
+          const int peak = g_audio_peak.exchange(0);
+          log::Info("fps {:.1f} (frame {}; step medio {:.2f} ms, max {:.2f} ms; hilos guest {}; audio {:.0f} KB/s, pico {})", fps,
+                    frame_, stat_step / stat_frames, stat_step_max, threads::Count(), ab / 1024.0 / std::max(el, 1e-6), peak);
+        }
         else
           log::Info("frame {}: step {:.1f} ms", frame_, ms);
         if (frame_ > 3) {
@@ -597,11 +631,10 @@ class GlThread {
   int dw_ = 1280, dh_ = 720;        // drawable de la ventana
   int rx_ = 0, ry_ = 0, rw_ = 1280, rh_ = 720;  // rectangulo de la imagen en la ventana
   bool paused_ = false, want_pause_ = false, quit_ = false, pending_resize_ = false, trace_input_ = false;
-  bool script_quit_when_done_ = false;
   long long frame_ = 0;
   Clock::time_point next_frame_;
   std::deque<std::string> cmds_;
-  int wait_frames_ = 0;
+  Clock::time_point wait_until_{};
   std::streamoff control_off_ = 0;
   std::vector<std::string> shot_names_;
 };
@@ -634,10 +667,16 @@ void ReportUnimplemented() {
   for (const auto& [name, n] : hle::CallCounts())
     if (n && !hle::IsRegistered(name)) missing += std::format("{}x{} ", name, n);
   log::Info("imports sin handler invocados: {}", missing.empty() ? "(ninguno)" : missing);
-  std::string jni_missing;
-  for (const auto& c : jni::Coverage())
-    if (!c.covered) jni_missing += std::format("{}.{}{} ", c.cls, c.name, c.sig);
-  log::Info("JNI sin emular: {}", jni_missing.empty() ? "(ninguno)" : jni_missing);
+  // JNI: IDs pedidos sin emulacion (inofensivo mientras no se llamen) y metodos LLAMADOS sin emulacion.
+  std::string ids, calls;
+  std::size_t n_ids = 0;
+  for (const auto& c : jni::Coverage()) {
+    if (c.covered) continue;
+    if (c.kind == jni::CoverageEntry::Kind::Call) calls += std::format("{}.{}{}x{} ", c.cls, c.name, c.sig, c.count);
+    else if (++n_ids <= 200) ids += std::format("{}.{} ", c.cls.substr(c.cls.rfind('/') + 1), c.name);
+  }
+  log::Info("JNI: metodos Java llamados sin emular: {}", calls.empty() ? "(ninguno)" : calls);
+  log::Info("JNI: {} clases/IDs pedidos sin emular (no llamados): {}", n_ids, ids.empty() ? "(ninguno)" : ids);
 }
 
 }  // namespace
@@ -674,6 +713,7 @@ int RunGame(const GameOptions& opt) {
   hle::gles::Register();
   hle::audio::Register();
   jni::Register();
+  if (const char* dump = std::getenv("ZW_AUDIO_DUMP")) g_audio_dump = std::fopen(dump, "wb");
   if (!opt.no_audio)
     jni::SetAudioTrackBackend(
         [](int st, int r, int c, int e, int b, int m) { return std::make_unique<SdlTrack>(st, r, c, e, b, m); });

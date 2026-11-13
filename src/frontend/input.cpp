@@ -9,22 +9,28 @@
 
 namespace zw::input {
 
-// Posiciones medidas sobre capturas del HUD a 1280x720 (ver docs/INPUT.md).
+// Posiciones medidas sobre capturas del HUD a 1280x720 (sticks: centros (170,590) y (1108,590), radio ~82 px;
+// botiquin "USE" (1195,390); arma (1150,70); pausa (62,42); boton verde ">>" de dialogos (1095,670)).
 nlohmann::json Mapper::DefaultConfig() {
   return nlohmann::json::parse(R"json({
     "deadzone": 0.25,
     "trigger_threshold": 0.4,
     "mouse_touch": true,
     "mouse_aim_button": "right",
-    "player_pos": [0.5, 0.5],
-    "move_stick": { "x": 0.125, "y": 0.80, "radius": 0.11,
+    "player_pos": [0.5, 0.45],
+    "move_stick": { "x": 0.133, "y": 0.82, "radius": 0.105,
                     "keys": { "up": "W", "down": "S", "left": "A", "right": "D" }, "pad_stick": "left" },
-    "aim_stick":  { "x": 0.875, "y": 0.80, "radius": 0.11,
+    "aim_stick":  { "x": 0.866, "y": 0.82, "radius": 0.105,
                     "keys": { "up": "Up", "down": "Down", "left": "Left", "right": "Right" }, "pad_stick": "right" },
-    "buttons": [],
+    "buttons": [
+      { "name": "botiquin", "x": 0.934, "y": 0.542, "keys": ["E", "F"],     "pad": ["y"] },
+      { "name": "arma",     "x": 0.900, "y": 0.100, "keys": ["Q", "R"],     "pad": ["rightshoulder", "x"] },
+      { "name": "pausa",    "x": 0.048, "y": 0.058, "keys": ["P", "Return"], "pad": ["start"] },
+      { "name": "aceptar",  "x": 0.855, "y": 0.930, "keys": ["Space"],      "pad": ["a"] }
+    ],
     "android_keys": [
       { "code": 4,  "keys": ["Escape", "Backspace"], "pad": ["back", "b"] },
-      { "code": 82, "keys": ["Tab"], "pad": ["start"] }
+      { "code": 82, "keys": ["Tab"], "pad": ["guide"] }
     ]
   })json");
 }

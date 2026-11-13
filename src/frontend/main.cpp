@@ -53,6 +53,7 @@ int main(int argc, char** argv) {
     else if (auto v = val("--shot-every="); !v.empty()) opt.shot_every = std::atoi(v.c_str());
     else if (a == "--no-audio") opt.no_audio = true;
     else if (a == "--hidden") opt.hidden = true;
+    else if (a == "--uncapped") opt.uncapped = true;
     else zw::log::Warn("argumento desconocido: {}", a);
   }
   if (smoke_frames < 0) return zw::RunGame(opt);
