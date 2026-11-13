@@ -12,8 +12,8 @@ sustituye Android por Windows: libc/pthread de bionic, OpenGL ES 2 (ANGLE sobre 
 > de tu APK. Los archivos del juego (`*.apk`, `*.obb`, `*.so`, `data/`) están excluidos en `.gitignore` y el script de
 > empaquetado se niega a generar un zip que los contenga.
 
-Estado: jugable a 60 fps de principio a fin del tutorial y primeras misiones (ver [`docs/QA.md`](docs/QA.md) para lo
-probado y lo no probado). Sin conexión: los servidores de Gameloft ya no existen, así que tienda online, TapJoy, etc. no funcionan.
+Estado: jugable a 60 fps (tutorial, menú de películas y la escena 1 "Body Count" completa, con guardado y carga; ver [`docs/QA.md`](docs/QA.md) para lo
+probado y lo no probado: mando físico y escenas 2+ sin probar). Sin conexión: los servidores de Gameloft ya no existen, así que tienda online, TapJoy, etc. no funcionan.
 
 ## Requisitos
 

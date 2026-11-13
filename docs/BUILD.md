@@ -13,7 +13,7 @@ Dependencias (todas fijadas):
 
 | Dependencia | Origen | Fijado por |
 |---|---|---|
-| SDL2, ANGLE (`angle`, GLES2 sobre D3D11), nlohmann-json, boost-icl/variant | vcpkg (modo manifest) | `builtin-baseline` en `vcpkg.json` |
+| SDL2, ANGLE (`angle`, GLES2 sobre D3D11), zlib, nlohmann-json, boost-icl/variant | vcpkg (modo manifest) | `builtin-baseline` en `vcpkg.json` |
 | Dear ImGui v1.91.9 (+ backends SDL2 / OpenGL3 en modo ES2) | FetchContent | tag |
 | dynarmic (azahar-emu, frontend A32 + backend x64, externals incluidos) | FetchContent | commit `a466015` |
 
@@ -156,13 +156,29 @@ ImGui de T2, sin juego). Entorno: `ZW_TRACE_INPUT=1`, `ZW_AUDIO_DUMP=<pcm>`, `ZW
 - El post-build copia `libEGL.dll`, `libGLESv2.dll` (ANGLE) y `z.dll` junto al exe. El contexto se pide ES 3.0 (el juego
   usa ES 2.0; el frontend necesita `glBlitFramebuffer` para escalar el framebuffer interno).
 
+## Empaquetar el release (T10)
+
+```powershell
+pwsh tools\package.ps1 -Clean        # configura (preset win-release), compila, ctest, monta y comprime
+pwsh tools\package.ps1 -SkipBuild    # solo reempaqueta lo que ya hay en el directorio de build
+```
+
+Salida (por defecto en `C:\Users\chdut\ZombiewoodDev\dist\`): carpeta `Zombiewood-Win64\` con `zombiewood.exe`, `SDL2.dll`,
+`libEGL.dll`, `libGLESv2.dll`, `z.dll`, `gamecontrollerdb.txt` (solo entradas de Windows, `tools/package/`), `readme.txt`
+(`tools/package/readme.txt`), `README.md` y `licenses/`; y `Zombiewood-Win64-<versión>.zip` (+ `.sha256`). El script falla si
+el paquete contiene `*.apk/.obb/.so/.mp4/.bar/.dex`. Parámetros: `-DistDir`, `-BuildDir`, `-Clean`, `-SkipBuild`, `-SkipTests`.
+`-Clean` hace un build realmente desde cero (vcpkg + clones de FetchContent: ~15-20 min, necesita red).
+
+El QA con entrada real de Windows está en `tools/qa/` (`qa_phase1…5`) y sus resultados en [`QA.md`](QA.md).
+Al abrirse con doble clic el exe suelta su consola (no sale ventana negra); desde un terminal la conserva.
+
 ## Estructura de targets
 
 `zw_core` (log/config/paths), `zw_installer` (T9: APK → datos, zlib + BCrypt), `zw_loader`, `zw_cpu` (+ `zw_cpu_deps` =
 dynarmic), `zw_hle_libc`, `zw_hle_gles`, `zw_hle_audio`, `zw_jni`, `zw_frontend` (ventana SDL2 + contexto GLES, arranque,
 hilo GL, input; T9: asistente, menú ImGui, vídeos con Media Foundation, copias de saves) y el ejecutable `zombiewood`.
-`ctest`: 8 pruebas, incluida `installer` (APK sintéticos, no necesita los datos del juego). zlib viene de vcpkg como
-dependencia de `angle` (`find_package(ZLIB)`).
+`ctest`: 8 pruebas, incluida `installer` (APK sintéticos, no necesita los datos del juego). zlib viene de vcpkg
+(declarado en `vcpkg.json`, `find_package(ZLIB)`).
 
 ## Notas
 
