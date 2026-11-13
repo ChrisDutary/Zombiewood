@@ -236,7 +236,9 @@ class EntryStream {
 // Concatenacion secuencial de varias entradas (archiveObbCache.zip.001 + .002 + ...).
 class ConcatStream {
  public:
-  ConcatStream(Zip& z, std::vector<const ZipEntry*> parts) : z_(z), parts_(std::move(parts)) {}
+  // `progress`: se incrementa con los bytes consumidos (= tamano de las partes: total exacto para la barra).
+  ConcatStream(Zip& z, std::vector<const ZipEntry*> parts, std::atomic<std::uint64_t>* progress)
+      : z_(z), parts_(std::move(parts)), progress_(progress) {}
   std::size_t Read(void* dst, std::size_t n) {
     auto* d = static_cast<unsigned char*>(dst);
     std::size_t got = 0;
@@ -249,6 +251,7 @@ class ConcatStream {
       if (k == 0) cur_.reset();
       got += k;
     }
+    if (progress_) *progress_ += got;
     return got;
   }
   bool ReadExact(void* dst, std::size_t n) { return Read(dst, n) == n; }
@@ -266,6 +269,7 @@ class ConcatStream {
   std::vector<const ZipEntry*> parts_;
   std::size_t idx_ = 0;
   std::unique_ptr<EntryStream> cur_;
+  std::atomic<std::uint64_t>* progress_ = nullptr;
 };
 
 // ------------------------------------------------------------------------------------- salida
@@ -348,7 +352,7 @@ class Installer {
 
   // ZIP partido por concatenacion: recorre las cabeceras locales en orden (no hace falta acceso aleatorio).
   void ExtractObbCache(Zip& z, const std::vector<const ZipEntry*>& parts) {
-    ConcatStream cs(z, parts);
+    ConcatStream cs(z, parts, &pr_.done);
     std::vector<unsigned char> in(kBuf);
     for (;;) {
       CheckCancel();
@@ -396,7 +400,6 @@ class Installer {
           c = crc32_z(c, buf_.data(), k);
           out.Write(buf_.data(), k);
           left -= k;
-          pr_.done += k;
         }
       } else if (method == 8) {
         z_stream zs{};
@@ -425,7 +428,6 @@ class Installer {
           c = crc32_z(c, buf_.data(), k);
           out.Write(buf_.data(), k);
           outn += k;
-          pr_.done += k;
         }
         if (left) cs.Skip(left);
         if (outn != usize) throw std::runtime_error(std::format("{}: tamano {} != {}", base, outn, usize));
@@ -540,7 +542,7 @@ Result Install(const Source& src, const fs::path& dest, Progress& pr) {
 
     // Tamano total esperado (para la barra).
     std::uint64_t total = 0;
-    for (const auto* e : cache) total += e->usize * 102 / 100;  // ~ tamano de los OBB
+    for (const auto* e : cache) total += e->usize;  // la barra cuenta lo consumido de las partes
     for (const auto& o : src.obbs) total += fs::file_size(o, ec);
 
     // APK sin lib en la raiz pero con assets/game.apk (wrapper): extraer el original a un temporal.

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <format>
 #include <thread>
+#include <utility>
 
 #include "backends/imgui_impl_opengl3.h"
 #include "backends/imgui_impl_sdl2.h"
@@ -75,6 +76,11 @@ class SetupUi {
       SDL_Event ev;
       while (SDL_PollEvent(&ev)) {
         ImGui_ImplSDL2_ProcessEvent(&ev);
+        if (ev.type == SDL_KEYDOWN) {
+          log::Debug("setup: tecla {}", SDL_GetScancodeName(ev.key.keysym.scancode));
+          // Enter: accion principal (tambien sin foco de ImGui; util para automatizar la prueba).
+          if (ev.key.keysym.scancode == SDL_SCANCODE_RETURN || ev.key.keysym.scancode == SDL_SCANCODE_KP_ENTER) enter_ = true;
+        }
         if (ev.type == SDL_QUIT || (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_CLOSE)) {
           prog_.cancel = true;
           quit_ = true;
@@ -159,6 +165,7 @@ class SetupUi {
   }
 
   void Frame(bool& ok) {
+    if (state_ == State::Installing || state_ == State::Error) enter_ = false;
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
@@ -185,7 +192,7 @@ class SetupUi {
         ImGui::Spacing();
         ImGui::TextDisabled("Se extraera en: %s", U8(paths::DefaultGameDir()).c_str());
         ImGui::Spacing();
-        if (ImGui::Button("Elegir APK...", ImVec2(220, 0))) {
+        if (ImGui::Button("Elegir APK... (Enter)", ImVec2(260, 0)) || std::exchange(enter_, false)) {
           const auto apk = PickApkDialog(win_);
           if (!apk.empty()) StartInstall(apk, o_.obbs);
         }
@@ -210,7 +217,7 @@ class SetupUi {
         ImGui::Spacing();
         ImGui::TextDisabled("Pulsa F1 durante el juego para abrir el menu (graficos, audio, controles, carpetas).");
         ImGui::Spacing();
-        if (ImGui::Button("Jugar", ImVec2(160, 0))) {
+        if (ImGui::Button("Jugar (Enter)", ImVec2(180, 0)) || std::exchange(enter_, false)) {
           ok = true;
           done_ = true;
         }
@@ -254,7 +261,7 @@ class SetupUi {
   installer::Source src_;
   installer::Result res_;
   std::thread worker_;
-  bool done_ = false, quit_ = false;
+  bool done_ = false, quit_ = false, enter_ = false;
 };
 
 }  // namespace
