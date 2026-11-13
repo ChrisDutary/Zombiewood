@@ -19,6 +19,7 @@ gaddr FakeJavaVM();
 
 // Carga cada .so (en orden), lista imports, ejecuta constructores y JNI_OnLoad con el JavaVM falso,
 // e imprime un informe por stdout/log. Devuelve 0 si todo llego al final, != 0 si algo se detuvo.
-int RunLoadOnly(const std::vector<std::filesystem::path>& libs);
+// `java_vm` != 0 (p. ej. zw::jni::JavaVM()) sustituye al JavaVM falso.
+int RunLoadOnly(const std::vector<std::filesystem::path>& libs, gaddr java_vm = 0);
 
 }  // namespace zw::loader

@@ -9,23 +9,35 @@
 
 namespace zw {
 
-bool Window::Create(int w, int h, const char* title) {
+bool Window::Create(int w, int h, const char* title, bool hidden) {
   // Pedir a SDL el driver EGL/GLES (ANGLE: libEGL.dll + libGLESv2.dll junto al exe) en vez de WGL.
   SDL_SetHint(SDL_HINT_OPENGL_ES_DRIVER, "1");
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+  // ES 3.0 si ANGLE lo da (el frontend usa glBlitFramebuffer para escalar); el juego solo usa ES 2.0.
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
   SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
   SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
   SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
   window_ = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h,
-                             SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+                             SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
+                                 (hidden ? SDL_WINDOW_HIDDEN : 0));
   if (!window_) {
     log::Error("SDL_CreateWindow fallo: {}", SDL_GetError());
     return false;
   }
   ctx_ = SDL_GL_CreateContext(window_);
+  if (!ctx_) {
+    // Reintento con ES 2.0 (hay que recrear la ventana: la config EGL depende de la version).
+    log::Warn("contexto GLES 3.0 no disponible ({}), probando 2.0", SDL_GetError());
+    SDL_DestroyWindow(window_);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    window_ = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h,
+                               SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
+                                   (hidden ? SDL_WINDOW_HIDDEN : 0));
+    ctx_ = window_ ? SDL_GL_CreateContext(window_) : nullptr;
+  }
   if (!ctx_) {
     log::Error("SDL_GL_CreateContext (GLES2/ANGLE) fallo: {}", SDL_GetError());
     return false;
@@ -44,8 +56,7 @@ bool Window::Create(int w, int h, const char* title) {
 
   std::istringstream ss(s(GL_EXTENSIONS));
   for (std::string e; ss >> e;) exts_.push_back(e);
-  log::Info("GL_EXTENSIONS ({}):", exts_.size());
-  for (auto& e : exts_) log::Info("  {}", e);
+  log::Info("GL_EXTENSIONS: {}", exts_.size());
   for (const char* want : {"GL_OES_compressed_ETC1_RGB8_texture", "GL_EXT_texture_compression_dxt1",
                            "GL_ANGLE_texture_compression_dxt5", "GL_OES_packed_depth_stencil",
                            "GL_OES_vertex_array_object", "GL_OES_depth_texture"})

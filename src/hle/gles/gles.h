@@ -41,6 +41,11 @@ struct Caps {
 // Capacidades detectadas (sondea si hace falta; requiere contexto actual).
 const Caps& GetCaps();
 
+// T8: el frontend renderiza el juego a un FBO propio (resolucion interna). Con fbo != 0, cada
+// glBindFramebuffer(target, 0) del guest liga ese FBO y glGetIntegerv(GL_FRAMEBUFFER_BINDING) devuelve 0
+// cuando esta ligado. Llamar desde el hilo GL (o antes de arrancarlo). 0 = framebuffer real de la ventana.
+void SetDefaultFramebuffer(std::uint32_t fbo);
+
 // Opciones para tests (normalmente vienen del entorno en Register()).
 void SetGlCheck(bool on);
 void SetForceSoftwareETC1(bool on);

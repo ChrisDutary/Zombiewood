@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 #include "backends/imgui_impl_opengl3.h"
@@ -12,7 +13,12 @@
 #include "core/log.h"
 #include "core/paths.h"
 #include "cpu/deps_check.h"
+#include "frontend/game.h"
 #include "frontend/window.h"
+#include "hle/audio/audio_hle.h"
+#include "hle/gles/gles.h"
+#include "hle/libc/libc.h"
+#include "jni/jni.h"
 #include "imgui.h"
 #include "loader/load_only.h"
 
@@ -24,17 +30,33 @@ int main(int argc, char** argv) {
     if (!std::strcmp(argv[i], "--load-only")) {
       std::vector<std::filesystem::path> libs(argv + i + 1, argv + argc);
       if (libs.empty()) { zw::log::Error("uso: zombiewood --load-only <ruta .so> [mas .so...]"); return 2; }
-      return zw::loader::RunLoadOnly(libs);
+      // Con la HLE real (T4-T7) y el JavaVM de T7; la HLE minima de T3 solo rellena huecos.
+      zw::GuestMemory::Init();
+      zw::hle::libc::Register();
+      zw::hle::gles::Register();
+      zw::hle::audio::Register();
+      zw::jni::Register();
+      return zw::loader::RunLoadOnly(libs, zw::jni::JavaVM());
     }
   }
-  zw::log::Info("Zombiewood (T2 esqueleto) - home: {}", zw::paths::Home().string());
-
-  int smoke_frames = -1;  // --smoke-test[=N]: salir solo tras N frames (por defecto 120)
+  // Sin --smoke-test: arrancar el juego (T8). --smoke-test[=N] conserva la prueba de ventana + ImGui de T2.
+  int smoke_frames = -1;
+  zw::GameOptions opt;
   for (int i = 1; i < argc; ++i) {
-    if (!std::strncmp(argv[i], "--smoke-test", 12)) {
-      smoke_frames = argv[i][12] == '=' ? std::atoi(argv[i] + 13) : 120;
-    }
+    const std::string a = argv[i];
+    auto val = [&](const char* k) { return a.rfind(k, 0) == 0 ? a.substr(std::strlen(k)) : std::string(); };
+    if (!std::strncmp(argv[i], "--smoke-test", 12)) smoke_frames = argv[i][12] == '=' ? std::atoi(argv[i] + 13) : 120;
+    else if (auto v = val("--lib="); !v.empty()) opt.lib = v;
+    else if (auto v = val("--frames="); !v.empty()) opt.max_frames = std::atoi(v.c_str());
+    else if (auto v = val("--script="); !v.empty()) opt.script = v;
+    else if (auto v = val("--control="); !v.empty()) opt.control = v;
+    else if (auto v = val("--shot-every="); !v.empty()) opt.shot_every = std::atoi(v.c_str());
+    else if (a == "--no-audio") opt.no_audio = true;
+    else if (a == "--hidden") opt.hidden = true;
+    else zw::log::Warn("argumento desconocido: {}", a);
   }
+  if (smoke_frames < 0) return zw::RunGame(opt);
+  zw::log::Info("Zombiewood (prueba de ventana) - home: {}", zw::paths::Home().string());
 
   auto cfg = zw::LoadConfig();
   int w = zw::ConfigGet(cfg, "width", 1280);

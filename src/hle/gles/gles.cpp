@@ -46,6 +46,7 @@ std::array<gaddr, 8> g_strings{};  // VENDOR, RENDERER, VERSION, SLV, EXTENSIONS
 GLuint g_array_buffer = 0;
 GLuint g_element_buffer = 0;
 GLenum g_pending_error = GL_NO_ERROR;  // error sintetizado por la HLE o capturado por ZW_GL_CHECK
+GLuint g_default_fbo = 0;              // T8: FBO del frontend que hace de framebuffer 0 del guest
 
 struct Shadow {
   gaddr ptr = 0;
@@ -194,7 +195,7 @@ void h_glBindBuffer(GLenum target, GLuint b) {
   if (target == GL_ARRAY_BUFFER) g_array_buffer = b;
   else if (target == GL_ELEMENT_ARRAY_BUFFER) g_element_buffer = b;
 }
-void h_glBindFramebuffer(GLenum t, GLuint f) { GL_ENTER("glBindFramebuffer"); ::glBindFramebuffer(t, f); }
+void h_glBindFramebuffer(GLenum t, GLuint f) { GL_ENTER("glBindFramebuffer"); ::glBindFramebuffer(t, f ? f : g_default_fbo); }
 void h_glBindRenderbuffer(GLenum t, GLuint r) { GL_ENTER("glBindRenderbuffer"); ::glBindRenderbuffer(t, r); }
 void h_glBindTexture(GLenum t, GLuint tex) { GL_ENTER("glBindTexture"); ::glBindTexture(t, tex); }
 void h_glBlendColor(float r, float g, float b, float a) { GL_ENTER("glBlendColor"); ::glBlendColor(r, g, b, a); }
@@ -281,6 +282,8 @@ void h_glGetIntegerv(GLenum pname, GLint* params) {
   bool handled;
   SpecialGet(pname, params, handled);
   if (!handled) ::glGetIntegerv(pname, params);
+  // El FBO del frontend es el "framebuffer 0" del guest.
+  if (pname == GL_FRAMEBUFFER_BINDING && g_default_fbo && static_cast<GLuint>(params[0]) == g_default_fbo) params[0] = 0;
 }
 void h_glGetFloatv(GLenum pname, GLfloat* params) {
   GL_ENTER("glGetFloatv");
@@ -637,6 +640,7 @@ bool EnvOn(const char* n) {
 
 const std::vector<std::string>& ImportNames() { return g_names; }
 
+void SetDefaultFramebuffer(std::uint32_t fbo) { g_default_fbo = fbo; }
 void SetGlCheck(bool on) { g_check = on; }
 void SetForceSoftwareETC1(bool on) { g_force_soft_etc1 = on; }
 

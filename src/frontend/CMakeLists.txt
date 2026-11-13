@@ -1,5 +1,7 @@
-add_library(zw_frontend STATIC window.cpp)
-target_link_libraries(zw_frontend PUBLIC zw_core zw_imgui SDL2::SDL2)
+add_library(zw_frontend STATIC window.cpp game.cpp input.cpp png.cpp)
+target_link_libraries(zw_frontend PUBLIC zw_core zw_imgui SDL2::SDL2
+                                  PRIVATE zw_loader zw_cpu zw_hle_libc zw_hle_gles zw_hle_audio zw_jni
+                                          unofficial::angle::libGLESv2)
 target_include_directories(zw_frontend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 add_executable(zombiewood main.cpp)

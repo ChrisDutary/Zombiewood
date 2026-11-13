@@ -130,7 +130,7 @@ void Out(std::format_string<A...> f, A&&... a) {
 }
 }  // namespace
 
-int RunLoadOnly(const std::vector<std::filesystem::path>& libs) {
+int RunLoadOnly(const std::vector<std::filesystem::path>& libs, gaddr java_vm) {
   using Clock = std::chrono::steady_clock;
   auto ms = [](Clock::time_point a) { return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - a).count(); };
   if (!GuestMemory::Init()) {
@@ -138,7 +138,7 @@ int RunLoadOnly(const std::vector<std::filesystem::path>& libs) {
     return 2;
   }
   bootstrap::Register();
-  const gaddr vm = bootstrap::FakeJavaVM();
+  const gaddr vm = java_vm ? java_vm : bootstrap::FakeJavaVM();
   int rc = 0;
 
   std::vector<Module*> mods;

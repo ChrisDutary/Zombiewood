@@ -9,7 +9,7 @@ namespace zw {
 class Window {
  public:
   ~Window();
-  bool Create(int w, int h, const char* title);
+  bool Create(int w, int h, const char* title, bool hidden = false);
   void SwapBuffers();
   SDL_Window* sdl() const { return window_; }
   SDL_GLContext gl() const { return ctx_; }
