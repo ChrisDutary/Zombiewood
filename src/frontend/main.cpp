@@ -31,6 +31,10 @@ int main(int argc, char** argv) {
   // El exe es de consola (CLI --install, ctest, logs en terminal). Si lo abrio el Explorador (doble clic) la consola es
   // solo nuestra: soltarla para que no aparezca una ventana negra junto al juego. Desde un terminal se conserva.
   { DWORD pids[2]; if (GetConsoleProcessList(pids, 2) == 1) FreeConsole(); }
+  // Icono de ventana/barra de tareas = recurso 101 del exe (resources/zombiewood.rc), si se incrusto. Debe ir antes de
+  // SDL_Init(VIDEO), que es cuando SDL registra la clase de ventana.
+  SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "101");
+  SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL, "101");
 #endif
   zw::log::Init();
 

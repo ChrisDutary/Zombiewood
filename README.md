@@ -94,6 +94,16 @@ pwsh Zombiewood\tools\package.ps1 -Clean      # configura, compila, prueba y cre
 Documentación técnica: [`docs/PLAN.md`](docs/PLAN.md), [`docs/ANALYSIS.md`](docs/ANALYSIS.md) (análisis del APK),
 [`docs/CONTRACTS.md`](docs/CONTRACTS.md) (interfaces entre módulos), [`docs/QA.md`](docs/QA.md).
 
+### Icono de la aplicación (opcional)
+
+El icono no se versiona (es arte del juego). Para incrustarlo en `zombiewood.exe`, genera el `.ico` desde tu imagen antes de compilar:
+
+```powershell
+pwsh tools/make_icon.ps1 -Source C:\ruta\a\tu\icono.jpg   # escribe resources/zombiewood.ico
+```
+
+CMake lo detecta y lo usa como icono del exe (escritorio, Explorador, barra de tareas y ventana).
+
 ## Créditos y licencias de terceros
 
 El código propio de este repositorio es el runtime (cargador, HLE, frontend). Usa, sin modificar salvo donde se indica:

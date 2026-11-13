@@ -7,6 +7,11 @@
 gamedata/
 data/
 
+# Icono derivado del arte del juego: cada usuario lo genera con tools/make_icon.ps1
+resources/*.ico
+icon-logo*.jpg
+icon-logo*.png
+
 # Build
 build/
 out/

@@ -7,6 +7,16 @@ target_link_libraries(zw_frontend PUBLIC zw_core zw_imgui zw_installer zw_hle_li
 target_include_directories(zw_frontend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 add_executable(zombiewood main.cpp)
+
+# Icono del exe: solo si el usuario genero resources/zombiewood.ico (tools/make_icon.ps1); no se versiona.
+set(ZW_ICON "${PROJECT_SOURCE_DIR}/resources/zombiewood.ico")
+if(WIN32 AND EXISTS "${ZW_ICON}")
+  target_sources(zombiewood PRIVATE "${PROJECT_SOURCE_DIR}/resources/zombiewood.rc")
+  set_property(SOURCE "${PROJECT_SOURCE_DIR}/resources/zombiewood.rc" APPEND PROPERTY OBJECT_DEPENDS "${ZW_ICON}")
+  message(STATUS "Icono de la app: ${ZW_ICON}")
+else()
+  message(STATUS "Sin icono de la app (genera resources/zombiewood.ico con tools/make_icon.ps1)")
+endif()
 target_link_libraries(zombiewood PRIVATE zw_frontend zw_loader zw_cpu zw_hle_libc zw_hle_gles zw_hle_audio zw_jni
                                           SDL2::SDL2main)
 

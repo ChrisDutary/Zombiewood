@@ -1,0 +1,4 @@
+// Recursos de Windows de zombiewood.exe.
+// 101 = icono de la aplicacion (escritorio, Explorador, barra de tareas y ventana via SDL_HINT_WINDOWS_INTRESOURCE_ICON).
+// zombiewood.ico no se versiona: generalo con  pwsh tools/make_icon.ps1 -Source <imagen>.
+101 ICON "zombiewood.ico"
