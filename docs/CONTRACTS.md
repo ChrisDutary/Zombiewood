@@ -1,69 +1,71 @@
-# Zombiewood — contratos entre módulos (T3)
+# Zombiewood — contracts between modules (T3)
 
-API pública del núcleo (`zw_cpu` + `zw_loader`) que usan T4–T8. Las cabeceras son la fuente de verdad:
+The core's public API (`zw_cpu` + `zw_loader`) used by T4–T8. The headers are the source of truth:
 
-| Cabecera | Contenido |
+| Header | Contents |
 |---|---|
-| `cpu/guest_memory.h` | `gaddr`, `g2h/h2g`, `GuestMemory` (páginas + heap), `mem::` (lectura/escritura), `GPtr<T>` |
-| `cpu/cpu.h` | `Cpu` (registros, datos por hilo), `call_guest`, `threads::`, `cpu::`, `debug::`, `GuestFault`, `GuestExit`, `gi64/gu64` |
+| `cpu/guest_memory.h` | `gaddr`, `g2h/h2g`, `GuestMemory` (pages + heap), `mem::` (read/write), `GPtr<T>` |
+| `cpu/cpu.h` | `Cpu` (registers, per-thread data), `call_guest`, `threads::`, `cpu::`, `debug::`, `GuestFault`, `GuestExit`, `gi64/gu64` |
 | `cpu/hle.h` | `ZW_HLE*`, `hle::Register/StubFor/DefineData…`, `VaList`, `Varargs` |
 | `loader/loader.h` | `loader::Load/RunInit/CallJniOnLoad/FindSymbol/addr2sym`, `Module` |
 
-CMake de un módulo consumidor: `target_link_libraries(zw_hle_xxx PUBLIC zw_cpu)` (+ `zw_loader` si necesita símbolos) e
-`#include "cpu/hle.h"`. No hace falta incluir nada de dynarmic.
+CMake for a consuming module: `target_link_libraries(zw_hle_xxx PUBLIC zw_cpu)` (+ `zw_loader` if it needs symbols) and
+`#include "cpu/hle.h"`. There is no need to include anything from dynarmic.
 
-**Estabilidad:** a partir de este commit solo habrá cambios compatibles (añadidos). Cambios incompatibles → vía coordinador.
+**Stability:** from this commit on there will only be compatible changes (additions). Incompatible changes → through the coordinator.
 
-Todo vive en el espacio de nombres `zw`. ABI del guest (T1): ARMv7-A, Thumb-2, VFPv3, **softfp**, little-endian, `wchar_t` de 32 bits.
+Everything lives in the `zw` namespace. Guest ABI (T1): ARMv7-A, Thumb-2, VFPv3, **softfp**, little-endian, 32-bit `wchar_t`.
 
----
-
-## 0. Reglas de oro
-
-1. **Nunca uses tipos del host cuyo tamaño difiere del guest en una firma HLE**: `size_t`, `long long`, `intptr_t`, `time_t`,
-   `off_t`, `wchar_t`, `long double`. Usa `zw::gsize` (= `uint32_t`), `int32_t`, `zw::gaddr`, `zw::gi64/gu64` (long long del
-   guest), `uint32_t` para `wchar_t`. Un entero de 64 bits "desnudo" como parámetro **no compila** (a propósito).
-2. **Los structs que ve el guest se declaran con campos de ancho fijo** (`uint32_t`, `GPtr<T>`), nunca con punteros host.
-3. **Los handlers corren en paralelo** en varios hilos host (un hilo host por hilo guest, sin *big lock*). Todo estado global
-   de un módulo HLE debe ser thread-safe. Se puede bloquear libremente en un handler normal (no `FAST`).
-4. **Registro explícito, no estático**: cada módulo expone una función `Register()` y dentro usa `ZW_HLE(...)`. (Un
-   inicializador estático en una `.lib` sin otras referencias lo descarta el enlazador de MSVC.) Convención de nombres:
-   `zw::hle::libc::Register()`, `zw::hle::gles::Register()`, `zw::hle::audio::Register()`, `zw::jni::Register()`; T8 las
-   llama **antes** de `loader::Load()`.
-5. Toda dirección de función guest lleva el **bit 0 = Thumb**. No lo quites ni lo pongas a mano: usa las direcciones tal como
-   las dan `FindExport/FindSymbol`, `.init_array` o el propio guest.
+> Runtime log messages quoted below (e.g. `import sin handler`) are the literal Spanish strings the code prints.
 
 ---
 
-## 1. Memoria guest (`cpu/guest_memory.h`)
+## 0. Golden rules
 
-Se reservan 4 GiB en el host: `host = zw::g_membase + guest`. Traducir es sumar; no hay tabla de páginas software.
+1. **Never use host types whose size differs from the guest's in an HLE signature**: `size_t`, `long long`, `intptr_t`, `time_t`,
+   `off_t`, `wchar_t`, `long double`. Use `zw::gsize` (= `uint32_t`), `int32_t`, `zw::gaddr`, `zw::gi64/gu64` (the guest's
+   long long), `uint32_t` for `wchar_t`. A "bare" 64-bit integer as a parameter **does not compile** (on purpose).
+2. **Structs seen by the guest are declared with fixed-width fields** (`uint32_t`, `GPtr<T>`), never with host pointers.
+3. **Handlers run in parallel** on several host threads (one host thread per guest thread, no *big lock*). All global state
+   of an HLE module must be thread-safe. A normal (non-`FAST`) handler may block freely.
+4. **Explicit registration, not static**: every module exposes a `Register()` function and uses `ZW_HLE(...)` inside it. (MSVC's
+   linker discards a static initializer in a `.lib` with no other references.) Naming convention:
+   `zw::hle::libc::Register()`, `zw::hle::gles::Register()`, `zw::hle::audio::Register()`, `zw::jni::Register()`; T8 calls
+   them **before** `loader::Load()`.
+5. Every guest function address carries **bit 0 = Thumb**. Do not clear or set it by hand: use addresses exactly as
+   `FindExport/FindSymbol`, `.init_array` or the guest itself provide them.
+
+---
+
+## 1. Guest memory (`cpu/guest_memory.h`)
+
+4 GiB are reserved on the host: `host = zw::g_membase + guest`. Translating is an addition; there is no software page table.
 
 ```cpp
-using gaddr = uint32_t;                 // dirección guest, 0 = NULL
+using gaddr = uint32_t;                 // guest address, 0 = NULL
 template <class T = void> T* g2h(gaddr a);   // 0 -> nullptr
-gaddr h2g(const void* p);                    // nullptr -> 0; error en log (y 0) si p no es memoria guest
+gaddr h2g(const void* p);                    // nullptr -> 0; logs an error (and returns 0) if p is not guest memory
 ```
 
-### 1.1 Mapa de direcciones
+### 1.1 Address map
 
-| Zona | Rango | Uso |
+| Zone | Range | Use |
 |---|---|---|
-| (nulo) | `0x00000000–0x0EFFFFFF` | nunca mapeado (atrapa NULL y offsets pequeños) |
-| `Zone::Thunks` | `0x0F000000–0x0FFFFFFF` | stubs de imports (`svc #n; bx lr`), stub de retorno de `call_guest` |
-| `Zone::Libs` | `0x10000000–0x1FFFFFFF` | `.so` cargados. El primero queda en `0x10000000` ⇒ `guest = 0x10000000 + vaddr ELF` de ANALYSIS.md |
-| `Zone::Heap` | `0x20000000–0x7FFFFFFF` | heap (`Alloc`) y `MapAnywhere(Zone::Heap)` |
-| `Zone::Stacks` | `0x80000000–0x8FFFFFFF` | pilas de hilos (con página de guarda) y bloques TLS |
-| kuser | `0xFFFF0000–0xFFFF0FFF` | *kuser helpers* de Linux ARM (`__kuser_cmpxchg` `0xffff0fc0`, `__kuser_memory_barrier` `0xffff0fa0`, `__kuser_cmpxchg64` `0xffff0f60`, `__kuser_get_tls` `0xffff0fe0`), implementados en código guest con `LDREX/STREX`. El `.so` los llama por dirección fija (atómicos de protobuf); no son imports |
+| (null) | `0x00000000–0x0EFFFFFF` | never mapped (catches NULL and small offsets) |
+| `Zone::Thunks` | `0x0F000000–0x0FFFFFFF` | import stubs (`svc #n; bx lr`), `call_guest` return stub |
+| `Zone::Libs` | `0x10000000–0x1FFFFFFF` | loaded `.so` files. The first one sits at `0x10000000` ⇒ `guest = 0x10000000 + ELF vaddr` from ANALYSIS.md |
+| `Zone::Heap` | `0x20000000–0x7FFFFFFF` | heap (`Alloc`) and `MapAnywhere(Zone::Heap)` |
+| `Zone::Stacks` | `0x80000000–0x8FFFFFFF` | thread stacks (with a guard page) and TLS blocks |
+| kuser | `0xFFFF0000–0xFFFF0FFF` | Linux ARM *kuser helpers* (`__kuser_cmpxchg` `0xffff0fc0`, `__kuser_memory_barrier` `0xffff0fa0`, `__kuser_cmpxchg64` `0xffff0f60`, `__kuser_get_tls` `0xffff0fe0`), implemented in guest code with `LDREX/STREX`. The `.so` calls them by fixed address (protobuf atomics); they are not imports |
 
-Tocar desde el host una dirección guest no mapeada = violación de acceso; el runtime la vuelca con el estado guest y aborta.
-Un acceso **del guest** a memoria no mapeada acaba en `GuestFault` con volcado, no en un crash.
-Si el puntero viene del guest y puede ser basura, valida con `GuestMemory::IsMapped(addr, size)`.
+Touching an unmapped guest address from the host = access violation; the runtime dumps it with the guest state and aborts.
+A **guest** access to unmapped memory ends in a `GuestFault` with a dump, not a crash.
+If a pointer comes from the guest and may be garbage, validate it with `GuestMemory::IsMapped(addr, size)`.
 
-### 1.2 Páginas
+### 1.2 Pages
 
 ```cpp
-bool  GuestMemory::Init();                                   // T8 lo llama al arrancar (idempotente)
+bool  GuestMemory::Init();                                   // T8 calls it at startup (idempotent)
 bool  GuestMemory::Map(gaddr addr, gsize size, Prot prot, std::string_view tag = {});
 gaddr GuestMemory::MapAnywhere(Zone z, gsize size, Prot prot, std::string_view tag = {}, gsize align = 4096);
 bool  GuestMemory::Unmap(gaddr addr, gsize size);
@@ -71,51 +73,51 @@ bool  GuestMemory::Protect(gaddr addr, gsize size, Prot prot);
 bool  GuestMemory::IsMapped(gaddr addr, gsize size = 1);
 ```
 
-`Prot`: `kProtRead|kProtWrite|kProtExec` (`kProtRW`, `kProtRX`…). Las páginas nuevas están a cero. El texto de los `.so` se
-mapea **solo lectura** (escribir en él desde el guest es un fallo; para parchear usa `hle::HookGuestFunction` o
+`Prot`: `kProtRead|kProtWrite|kProtExec` (`kProtRW`, `kProtRX`…). New pages are zeroed. The `.so` text is mapped
+**read-only** (writing to it from the guest is a fault; to patch it use `hle::HookGuestFunction` or
 `Protect` + `cpu::InvalidateCode`).
 
-### 1.3 Heap (para `malloc` de T4 y para objetos que la HLE entrega al guest)
+### 1.3 Heap (for T4's `malloc` and for objects the HLE hands to the guest)
 
 ```cpp
-gaddr GuestMemory::Alloc(gsize size);             // alineado a 8; Alloc(0) devuelve un bloque válido; 0 = sin memoria
-gaddr GuestMemory::Calloc(gsize n, gsize size);   // a cero
-gaddr GuestMemory::Realloc(gaddr p, gsize size);  // Realloc(0, n) == Alloc(n); conserva el contenido
-gaddr GuestMemory::AllocAligned(gsize size, gsize align);  // memalign (se libera con Free)
-void  GuestMemory::Free(gaddr p);                 // Free(0) no-op; doble free -> error en log, no revienta
+gaddr GuestMemory::Alloc(gsize size);             // 8-byte aligned; Alloc(0) returns a valid block; 0 = out of memory
+gaddr GuestMemory::Calloc(gsize n, gsize size);   // zeroed
+gaddr GuestMemory::Realloc(gaddr p, gsize size);  // Realloc(0, n) == Alloc(n); keeps the contents
+gaddr GuestMemory::AllocAligned(gsize size, gsize align);  // memalign (freed with Free)
+void  GuestMemory::Free(gaddr p);                 // Free(0) is a no-op; double free -> error in the log, does not crash
 gsize GuestMemory::UsableSize(gaddr p);
 ```
 
-Thread-safe. El contenido de `Alloc` **no** está a cero. T4: `malloc/free/calloc/realloc/strdup` son envoltorios directos.
+Thread-safe. `Alloc`'s contents are **not** zeroed. T4: `malloc/free/calloc/realloc/strdup` are direct wrappers.
 
-### 1.4 Lectura/escritura
+### 1.4 Reading/writing
 
 ```cpp
 uint32_t v = zw::mem::R32(addr);   zw::mem::W32(addr, v);      // R8/R16/R32/R64, W8/W16/W32/W64
 auto st = zw::mem::Read<MyGuestStruct>(addr);   zw::mem::Write<MyGuestStruct>(addr, st);
-std::string s = zw::mem::ReadCStr(addr);                       // "" si addr == 0
-zw::mem::WriteCStr(dst, "texto", cap);                         // trunca, siempre termina en '\0'
-gaddr p = zw::mem::StrDup("hola");                             // en el heap guest (Free)
+std::string s = zw::mem::ReadCStr(addr);                       // "" if addr == 0
+zw::mem::WriteCStr(dst, "text", cap);                          // truncates, always ends in '\0'
+gaddr p = zw::mem::StrDup("hello");                            // on the guest heap (Free)
 gaddr q = zw::mem::Dup(host_ptr, n);
 ```
 
-`GPtr<T>`: puntero guest tipado de 4 bytes para campos de structs y parámetros:
+`GPtr<T>`: a typed 4-byte guest pointer for struct fields and parameters:
 
 ```cpp
-struct GuestIovec { zw::GPtr<uint8_t> base; uint32_t len; };   // sizeof == 8, igual que en el guest
+struct GuestIovec { zw::GPtr<uint8_t> base; uint32_t len; };   // sizeof == 8, same as in the guest
 auto* io = zw::g2h<GuestIovec>(addr);
 memcpy(dst, io->base.get(), io->len);
 ```
 
 ---
 
-## 2. Imports HLE (`cpu/hle.h`)
+## 2. HLE imports (`cpu/hle.h`)
 
-Cada import de función del `.so` se resuelve a un **stub guest** en `Zone::Thunks` (ARM: `svc #n; bx lr`). El `SVC` despacha al
-handler registrado con ese nombre. El mismo stub sirve a la PLT, a `R_ARM_ABS32/GLOB_DAT` (punteros a `malloc`, etc.) y a
-cualquier puntero a función que la HLE entregue al guest.
+Each function import of the `.so` resolves to a **guest stub** in `Zone::Thunks` (ARM: `svc #n; bx lr`). The `SVC` dispatches
+to the handler registered under that name. The same stub serves the PLT, `R_ARM_ABS32/GLOB_DAT` (pointers to `malloc`, etc.)
+and any function pointer the HLE hands to the guest.
 
-### 2.1 Registrar
+### 2.1 Registering
 
 ```cpp
 #include "cpu/hle.h"
@@ -126,11 +128,11 @@ void*    hle_memcpy(void* d, const void* s, zw::gsize n) { return std::memcpy(d,
 double   hle_pow(double a, double b)                  { return std::pow(a, b); }
 float    hle_sqrtf(float x)                           { return std::sqrt(x); }
 zw::gaddr hle_malloc(zw::gsize n)                      { return zw::GuestMemory::Alloc(n); }
-int      hle_errno_ptr_demo(zw::Cpu& cpu)             { return (int)cpu.errno_addr(); }   // Cpu& no consume argumentos
+int      hle_errno_ptr_demo(zw::Cpu& cpu)             { return (int)cpu.errno_addr(); }   // Cpu& consumes no arguments
 }
 void zw::hle::libc::Register() {
   ZW_HLE("abs", hle_abs);
-  ZW_HLE_FAST("strlen", hle_strlen);     // FAST: dentro del JIT, ver 2.4
+  ZW_HLE_FAST("strlen", hle_strlen);     // FAST: inside the JIT, see 2.4
   ZW_HLE_FAST("memcpy", hle_memcpy);
   ZW_HLE_FAST("pow", hle_pow);
   ZW_HLE_FAST("sqrtf", hle_sqrtf);
@@ -138,108 +140,109 @@ void zw::hle::libc::Register() {
 }
 ```
 
-- `ZW_HLE(nombre, fn)` / `ZW_HLE_FAST(nombre, fn)`: `fn` es una función libre/estática **no sobrecargada** (para `std::sin`
-  etc. escribe un envoltorio). El marshalling se deduce de la firma.
-- `ZW_HLE_RAW(nombre, void(*)(zw::Cpu&))`: handler crudo; lee `cpu.reg(0..3)`, `cpu.arg_word(i)` y escribe `cpu.reg(0)`.
-- `ZW_HLE_THUNK(nombre, fn)` → `gaddr`: registra y devuelve la dirección del stub (para vtables, ver §7).
-- `hle::Register(nombre, raw, flags)`: forma no-macro. Registrar el mismo nombre otra vez **sustituye** al anterior (el
-  último gana); se puede registrar antes o después de cargar el `.so`.
-- `hle::StubFor(nombre)` → dirección guest del stub (la crea si no existía; estable).
+- `ZW_HLE(name, fn)` / `ZW_HLE_FAST(name, fn)`: `fn` is a free/static, **non-overloaded** function (for `std::sin` and the
+  like, write a wrapper). Marshalling is deduced from the signature.
+- `ZW_HLE_RAW(name, void(*)(zw::Cpu&))`: a raw handler; reads `cpu.reg(0..3)`, `cpu.arg_word(i)` and writes `cpu.reg(0)`.
+- `ZW_HLE_THUNK(name, fn)` → `gaddr`: registers and returns the stub's address (for vtables, see §7).
+- `hle::Register(name, raw, flags)`: the non-macro form. Registering the same name again **replaces** the previous one (the
+  last one wins); you can register before or after loading the `.so`.
+- `hle::StubFor(name)` → the guest address of the stub (created if it did not exist; stable).
 
-### 2.2 Marshalling automático (AAPCS softfp, confirmado por T1)
+### 2.2 Automatic marshalling (AAPCS softfp, confirmed by T1)
 
-Los argumentos son "palabras" de 4 bytes: palabras 0–3 = `r0–r3`, palabra 4+ = `[sp + 4·(i−4)]`.
+Arguments are 4-byte "words": words 0–3 = `r0–r3`, word 4+ = `[sp + 4·(i−4)]`.
 
-| Tipo C++ del parámetro | Consume | Notas |
+| C++ parameter type | Consumes | Notes |
 |---|---|---|
-| `bool`, enteros y enums ≤ 32 bits, `zw::gaddr`, `zw::gsize` | 1 palabra | se trunca al tipo (`char`, `short`…) |
-| `float` | 1 palabra | bits crudos en registro núcleo/pila (softfp) |
-| `double`, `zw::gi64`, `zw::gu64` | 2 palabras, **índice par** | `r0:r1` o `r2:r3` (si tocaba `r1`/`r3` se salta) o pila alineada a 8 |
-| `T*` (puntero host) | 1 palabra | traducido con `g2h` (0 → `nullptr`). **No** se valida que esté mapeado |
-| `zw::GPtr<T>` | 1 palabra | sin traducir; `.addr`, `.get()` |
-| `zw::VaList` | 1 palabra | un `va_list` del guest (`vprintf(fmt, ap)`) |
-| `zw::Varargs` | — (debe ser el último) | el `...` de la función: lee lo que sigue a los parámetros con nombre |
-| `zw::Cpu&` | nada | acceso al hilo guest actual; puede ir en cualquier posición |
-| `int64_t`, `uint64_t`, `size_t`, `long long` | **error de compilación** | ambiguo: usa `gi64/gu64` o `gsize` |
+| `bool`, integers and enums ≤ 32 bits, `zw::gaddr`, `zw::gsize` | 1 word | truncated to the type (`char`, `short`…) |
+| `float` | 1 word | raw bits in a core register/the stack (softfp) |
+| `double`, `zw::gi64`, `zw::gu64` | 2 words, **even index** | `r0:r1` or `r2:r3` (skips `r1`/`r3` if that was next) or 8-aligned stack |
+| `T*` (host pointer) | 1 word | translated with `g2h` (0 → `nullptr`). Mapping is **not** validated |
+| `zw::GPtr<T>` | 1 word | untranslated; `.addr`, `.get()` |
+| `zw::VaList` | 1 word | a guest `va_list` (`vprintf(fmt, ap)`) |
+| `zw::Varargs` | — (must be last) | the function's `...`: reads whatever follows the named parameters |
+| `zw::Cpu&` | nothing | access to the current guest thread; may appear in any position |
+| `int64_t`, `uint64_t`, `size_t`, `long long` | **compile error** | ambiguous: use `gi64/gu64` or `gsize` |
 
-| Tipo de retorno | Dónde |
+| Return type | Where |
 |---|---|
 | `void` | — |
-| `bool`, enteros/enums ≤ 32 bits | `r0` (con extensión de signo/cero) |
+| `bool`, integers/enums ≤ 32 bits | `r0` (sign/zero-extended) |
 | `float` | `r0` (bits) |
-| `double`, `gi64`, `gu64`, enteros de 64 bits | `r0:r1` (devolver `size_t` del host es válido: `r1` es *caller-saved*) |
-| `T*` | `r0 = h2g(p)` (debe ser memoria guest o `nullptr`) |
+| `double`, `gi64`, `gu64`, 64-bit integers | `r0:r1` (returning a host `size_t` is valid: `r1` is *caller-saved*) |
+| `T*` | `r0 = h2g(p)` (must be guest memory or `nullptr`) |
 | `GPtr<T>` | `r0` |
 
-No soportado automáticamente: structs por valor (p. ej. `div_t div(int,int)`: el guest pasa un puntero oculto de resultado en
-`r0`; declara `void hle_div(GPtr<DivT> out, int a, int b)`), y `long double` (= `double` en ARM).
+Not supported automatically: structs by value (e.g. `div_t div(int,int)`: the guest passes a hidden result pointer in
+`r0`; declare `void hle_div(GPtr<DivT> out, int a, int b)`), and `long double` (= `double` on ARM).
 
-### 2.3 Variádicas y `va_list`
+### 2.3 Variadics and `va_list`
 
 ```cpp
-// Formateador común del módulo: recibe un lector de argumentos.
+// A module's shared formatter: takes an argument reader.
 int do_vsnprintf(char* dst, zw::gsize cap, const char* fmt, zw::VaList& ap);
 
 int hle_snprintf(char* dst, zw::gsize cap, const char* fmt, zw::Varargs va) { return do_vsnprintf(dst, cap, fmt, va); }
 int hle_vsnprintf(char* dst, zw::gsize cap, const char* fmt, zw::VaList ap)  { return do_vsnprintf(dst, cap, fmt, ap); }
 
-// Dentro del formateador:
-int         i = ap.Next<int>();             // %d %c %x  (char/short ya vienen promocionados a int)
-double      d = ap.Next<double>();          // %f %g     (float promocionado; Next<float>() no compila)
-zw::gi64    q = ap.Next<zw::gi64>();        // %lld      (alineado a 8 automáticamente)
-const char* s = ap.Next<const char*>();     // %s        (traducido a host; nullptr si 0)
+// Inside the formatter:
+int         i = ap.Next<int>();             // %d %c %x  (char/short arrive already promoted to int)
+double      d = ap.Next<double>();          // %f %g     (float promoted; Next<float>() does not compile)
+zw::gi64    q = ap.Next<zw::gi64>();        // %lld      (8-byte aligned automatically)
+const char* s = ap.Next<const char*>();     // %s        (translated to host; nullptr if 0)
 zw::gaddr   p = ap.Next<zw::gaddr>();       // %p / %n
 ```
 
-`VaList::FromGuest(gaddr ap)` y `VaList::FromCall(cpu, primera_palabra)` construyen lectores a mano (p. ej. en un handler
-crudo de `CallStaticVoidMethod(env, cls, mid, ...)`: `VaList::FromCall(cpu, 3)`; en `CallStaticVoidMethodV(env, cls, mid, va_list)`:
-parámetro `zw::VaList`). Para `Call…MethodA(…, const jvalue* args)` lee `mem::R64(args + 8*i)`.
+`VaList::FromGuest(gaddr ap)` and `VaList::FromCall(cpu, first_word)` build readers by hand (e.g. in a raw handler of
+`CallStaticVoidMethod(env, cls, mid, ...)`: `VaList::FromCall(cpu, 3)`; in `CallStaticVoidMethodV(env, cls, mid, va_list)`:
+a `zw::VaList` parameter). For `Call…MethodA(…, const jvalue* args)` read `mem::R64(args + 8*i)`.
 
-### 2.4 Handlers `FAST` frente a normales
+### 2.4 `FAST` vs normal handlers
 
-- **Normal** (`ZW_HLE`): el JIT se detiene en el `svc`, el handler corre fuera de `Jit::Run`. Puede llamar a `call_guest`,
-  bloquear, lanzar `GuestExit`/`GuestFault`, crear hilos.
-- **FAST** (`ZW_HLE_FAST`): corre dentro del callback del JIT (evita salir y volver a entrar en el JIT en cada llamada). **Prohibido**:
-  `call_guest`, lanzar excepciones C++, bloquear indefinidamente, tocar `pc/sp/lr`. Úsalo para `mem*`, `str*`, `libm`, y casi
-  todo `gl*`. En caso de duda, normal.
+- **Normal** (`ZW_HLE`): the JIT stops at the `svc`, and the handler runs outside `Jit::Run`. It may call `call_guest`,
+  block, throw `GuestExit`/`GuestFault`, create threads.
+- **FAST** (`ZW_HLE_FAST`): runs inside the JIT callback (avoids leaving and re-entering the JIT on every call). **Forbidden**:
+  `call_guest`, throwing C++ exceptions, blocking indefinitely, touching `pc/sp/lr`. Use it for `mem*`, `str*`, `libm`, and
+  almost all of `gl*`. When in doubt, use normal.
 
-### 2.5 Datos importados
+### 2.5 Imported data
 
-Los 8 imports de datos (`__sF`, `__stack_chk_guard`, `_ctype_`, `_tolower_tab_`, `_toupper_tab_`, `SL_IID_ENGINE`,
-`SL_IID_BUFFERQUEUE`, `SL_IID_PLAY`) tienen `st_size = 0` en el `.so`: el tamaño lo decide el módulo HLE dueño.
+The 8 data imports (`__sF`, `__stack_chk_guard`, `_ctype_`, `_tolower_tab_`, `_toupper_tab_`, `SL_IID_ENGINE`,
+`SL_IID_BUFFERQUEUE`, `SL_IID_PLAY`) have `st_size = 0` in the `.so`: the owning HLE module decides the size.
 
 ```cpp
 void zw::hle::libc::Register() {
-  zw::gaddr guard = zw::hle::DefineData("__stack_chk_guard", 4);     // bloque guest a cero, estable
+  zw::gaddr guard = zw::hle::DefineData("__stack_chk_guard", 4);     // zeroed guest block, stable
   zw::mem::W32(guard, 0x5A5A1234);
   zw::gaddr sF = zw::hle::DefineData("__sF", 3 * 84);                // FILE __sF[3]
-  zw::gaddr tab = zw::GuestMemory::Alloc(257);                       // tabla
-  zw::gaddr ctype = zw::hle::DefineData("_ctype_", 4);               // `const char* _ctype_` (variable puntero)
+  zw::gaddr tab = zw::GuestMemory::Alloc(257);                       // table
+  zw::gaddr ctype = zw::hle::DefineData("_ctype_", 4);               // `const char* _ctype_` (pointer variable)
   zw::mem::W32(ctype, tab);
 }
 ```
 
-**Deben definirse antes de `loader::Load()`** (el GOT se rellena en la carga). Un dato sin definir se resuelve a un bloque
-de 1024 bytes a cero con un aviso en el log (`Via::HleDataPlaceholder`); `hle::FindData(nombre)` lo devuelve igualmente.
-Dueños: `__sF`, `__stack_chk_guard`, `_ctype_`, `_tolower_tab_`, `_toupper_tab_` → T4; `SL_IID_*` → T6.
+**They must be defined before `loader::Load()`** (the GOT is filled at load time). Undefined data resolves to a zeroed
+1024-byte block with a warning in the log (`Via::HleDataPlaceholder`); `hle::FindData(name)` returns it just the same.
+Owners: `__sF`, `__stack_chk_guard`, `_ctype_`, `_tolower_tab_`, `_toupper_tab_` → T4; `SL_IID_*` → T6.
 
-### 2.6 Imports sin handler, traza y estadísticas
+### 2.6 Imports without a handler, tracing and statistics
 
-- Import sin handler: la **primera** llamada escribe `import sin handler: <nombre> (lr = <símbolo>)` y devuelve 0 (`r0 = 0`).
-  Con `ZW_ABORT_ON_UNIMPLEMENTED=1` o `hle::SetUnimplementedPolicy(OnUnimplemented::Abort)` lanza `GuestFault`.
-- `hle::UnimplementedImports()` lista los stubs pedidos sin handler (lo usa `--load-only`).
-- `ZW_TRACE_IMPORTS=1` (o `debug::SetTraceImports(true)`): una línea por llamada (`hilo nombre(r0, r1, r2, r3) lr=…` y el
-  retorno). `ZW_TRACE_FILTER=subcadena` filtra por nombre.
-- `hle::CallCounts()`: contador de llamadas por import.
+- Import without a handler: the **first** call writes `import sin handler: <name> (lr = <symbol>)` (import without handler)
+  and returns 0 (`r0 = 0`). With `ZW_ABORT_ON_UNIMPLEMENTED=1` or `hle::SetUnimplementedPolicy(OnUnimplemented::Abort)` it
+  throws `GuestFault`.
+- `hle::UnimplementedImports()` lists the stubs requested without a handler (used by `--load-only`).
+- `ZW_TRACE_IMPORTS=1` (or `debug::SetTraceImports(true)`): one line per call (`thread name(r0, r1, r2, r3) lr=…` and the
+  return value). `ZW_TRACE_FILTER=substring` filters by name.
+- `hle::CallCounts()`: per-import call counter.
 
-### 2.7 Ya implementados por T3 (no los registres)
+### 2.7 Already implemented by T3 (do not register them)
 
-`setjmp`, `_setjmp`, `sigsetjmp`, `longjmp`, `_longjmp`, `siglongjmp` (sobre el estado del CPU guest: r4–r11, sp, lr, d8–d15,
-fpscr; `jmp_buf` de 256 bytes de bionic sobra; `longjmp` a través de fronteras `call_guest` funciona) y
-`__gnu_Unwind_Find_exidx` (lo registra el loader con las tablas `.ARM.exidx` de cada módulo). Si un módulo registra uno de
-estos nombres, sustituye al de T3.
+`setjmp`, `_setjmp`, `sigsetjmp`, `longjmp`, `_longjmp`, `siglongjmp` (on top of the guest CPU state: r4–r11, sp, lr, d8–d15,
+fpscr; bionic's 256-byte `jmp_buf` is more than enough; `longjmp` across `call_guest` boundaries works) and
+`__gnu_Unwind_Find_exidx` (registered by the loader with each module's `.ARM.exidx` tables). If a module registers one of
+these names, it replaces T3's.
 
-### 2.8 Sustituir funciones internas del `.so`
+### 2.8 Replacing internal functions of the `.so`
 
 ```cpp
 static int my_CheckDiskSpace() { return 1; }
@@ -247,7 +250,7 @@ ZW_HLE("zw_CheckDiskSpace", my_CheckDiskSpace);
 zw::hle::HookGuestFunction(zw::loader::FindSymbol("_Z14CheckDiskSpacev"), "zw_CheckDiskSpace");
 ```
 
-Parchea la entrada de la función con un salto al stub (hacerlo después de `Load`, antes de ejecutar ese código).
+Patches the function's entry with a jump to the stub (do it after `Load`, before that code runs).
 
 ---
 
@@ -257,44 +260,44 @@ Parchea la entrada de la función con un salto al stub (hacerlo después de `Loa
 template <class R = uint32_t, class... A> R zw::call_guest(gaddr fn, const A&... args);
 ```
 
-- Ejecuta `fn` en el `Cpu` del hilo host actual y vuelve cuando la función retorna (LR mágico → stub de retorno).
-- **Reentrante**: se puede llamar desde un handler normal (qsort → comparador, `pthread_once`, JNI `Call…Method` → Java falso
-  → `Java_…` nativo → …). Conserva todos los registros núcleo del llamador guest.
-- Argumentos: mismas reglas que §2.2 en sentido inverso — enteros ≤ 32 bits/`gaddr`/enum/`bool` (1 palabra), `float`
-  (1 palabra), `double`/`gi64`/`gu64` (2 palabras, índice par), `T*` (se convierte con `h2g`: **debe** apuntar a memoria
-  guest), `GPtr<T>`, `nullptr`. Un `int64_t`/`size_t` desnudo no compila.
-- `R`: `void`, enteros, `bool`, `float`, `double`, `gi64/gu64/int64_t/uint64_t`, `T*` (traducido con `g2h`), `GPtr<T>`.
-- Desde un hilo host que nunca ha ejecutado guest, la primera llamada lo "adjunta" (crea su `Cpu` con pila de 1 MiB).
-- Errores: `zw::GuestFault` (el guest falló; `what()` trae registros + backtrace) y `zw::GuestExit{code}` (alguien hizo
-  `exit`) se propagan como excepciones C++ hasta quien llamó a `call_guest` en el nivel más externo.
+- Runs `fn` on the current host thread's `Cpu` and returns when the function returns (magic LR → return stub).
+- **Reentrant**: can be called from a normal handler (qsort → comparator, `pthread_once`, JNI `Call…Method` → fake Java
+  → native `Java_…` → …). Preserves all of the guest caller's core registers.
+- Arguments: the same rules as §2.2 in reverse — integers ≤ 32 bits/`gaddr`/enum/`bool` (1 word), `float`
+  (1 word), `double`/`gi64`/`gu64` (2 words, even index), `T*` (converted with `h2g`: it **must** point to guest
+  memory), `GPtr<T>`, `nullptr`. A bare `int64_t`/`size_t` does not compile.
+- `R`: `void`, integers, `bool`, `float`, `double`, `gi64/gu64/int64_t/uint64_t`, `T*` (translated with `g2h`), `GPtr<T>`.
+- From a host thread that has never run guest code, the first call "attaches" it (creates its `Cpu` with a 1 MiB stack).
+- Errors: `zw::GuestFault` (the guest failed; `what()` carries registers + backtrace) and `zw::GuestExit{code}` (someone
+  called `exit`) propagate as C++ exceptions up to whoever called `call_guest` at the outermost level.
 
 ```cpp
 // qsort (T4)
 void hle_qsort(zw::gaddr base, zw::gsize n, zw::gsize sz, zw::gaddr cmp) {
   std::vector<uint8_t> tmp(sz);
-  // ... algoritmo host; para comparar:
+  // ... host algorithm; to compare:
   int r = zw::call_guest<int>(cmp, base + i * sz, base + j * sz);
 }
-// Llamar a un nativo JNI (T7/T8)
+// Calling a JNI native (T7/T8)
 zw::gaddr fn = zw::loader::FindSymbol("Java_com_gameloft_android_ANMP_GloftZOHM_GL2JNILib_resize");
 zw::call_guest<void>(fn, env, clazz, 1280, 720);
-zw::call_guest<void>(nativeAccel, env, clazz, 0.0f, 9.8f, 0.0f);     // floats: softfp automático
+zw::call_guest<void>(nativeAccel, env, clazz, 0.0f, 9.8f, 0.0f);     // floats: automatic softfp
 ```
 
-Cadenas/arrays para el guest: primero cópialos a memoria guest (`mem::StrDup`, `GuestMemory::Alloc`) y pasa el `gaddr`.
+Strings/arrays for the guest: copy them into guest memory first (`mem::StrDup`, `GuestMemory::Alloc`) and pass the `gaddr`.
 
 ---
 
-## 4. `Cpu` y datos por hilo (`cpu/cpu.h`)
+## 4. `Cpu` and per-thread data (`cpu/cpu.h`)
 
 ```cpp
-zw::Cpu& cpu = zw::Cpu::Current();      // el del hilo host actual (lo crea si hace falta)
+zw::Cpu& cpu = zw::Cpu::Current();      // the current host thread's (created if needed)
 cpu.reg(0..15), cpu.sp(), cpu.lr(), cpu.pc(), cpu.cpsr(), cpu.fpscr(), cpu.d(i)/set_d(i, bits), cpu.s(i)/set_s
-cpu.arg_word(i)        // palabra AAPCS i de la llamada a import en curso
-cpu.thread_id()        // uint32 != 0, único entre hilos vivos (sirve de pthread_t / gettid)
-cpu.errno_addr()       // gaddr de un int por hilo -> `int* __errno()` devuelve esto
-cpu.tls()              // bloque TLS bionic del hilo (64 palabras; TPIDRURO lo devuelve). [0] = self, [1] = thread_id
-cpu.user(zw::UserSlot::Libc)   // void*& por hilo para cada módulo (Libc, Pthread, Gles, Audio, Jni, Frontend, Spare0/1)
+cpu.arg_word(i)        // AAPCS word i of the import call in progress
+cpu.thread_id()        // uint32 != 0, unique among live threads (serves as pthread_t / gettid)
+cpu.errno_addr()       // gaddr of a per-thread int -> `int* __errno()` returns this
+cpu.tls()              // the thread's bionic TLS block (64 words; returned by TPIDRURO). [0] = self, [1] = thread_id
+cpu.user(zw::UserSlot::Libc)   // per-thread void*& for each module (Libc, Pthread, Gles, Audio, Jni, Frontend, Spare0/1)
 cpu.stack_base(), cpu.stack_size(), cpu.call_depth(), cpu.current_import()
 ```
 
@@ -302,31 +305,31 @@ cpu.stack_base(), cpu.stack_size(), cpu.call_depth(), cpu.current_import()
 zw::gaddr hle_errno(zw::Cpu& cpu) { return cpu.errno_addr(); }          // ZW_HLE_FAST("__errno", hle_errno)
 ```
 
-`user(slot)` empieza en `nullptr`; libéralo en un *exit hook* (§5). El registro CP15 `TPIDRURO` devuelve `cpu.tls()` (T1: el
-juego no lo usa; el resto de CP15 lee 0).
+`user(slot)` starts as `nullptr`; free it in an *exit hook* (§5). The CP15 register `TPIDRURO` returns `cpu.tls()` (T1: the
+game does not use it; the rest of CP15 reads 0).
 
 ---
 
-## 5. Hilos (`zw::threads`, `cpu/cpu.h`)
+## 5. Threads (`zw::threads`, `cpu/cpu.h`)
 
-Modelo: **un hilo host + un `Dynarmic::A32::Jit` por hilo guest**, concurrencia real, monitor exclusivo global para
-`LDREX/STREX`. No hay *big lock*: no hay nada que soltar en llamadas bloqueantes.
+Model: **one host thread + one `Dynarmic::A32::Jit` per guest thread**, real concurrency, a global exclusive monitor for
+`LDREX/STREX`. There is no *big lock*: nothing to release around blocking calls.
 
 ```cpp
 struct CreateParams { gaddr entry; gaddr arg; gsize stack_size = 0; bool detached = false; std::string name; };
-ThreadId threads::Create(const CreateParams&);          // 0 si falla. stack < 256 KiB se sube a 256 KiB
+ThreadId threads::Create(const CreateParams&);          // 0 on failure. Stacks < 256 KiB are raised to 256 KiB
 bool     threads::Join(ThreadId, uint32_t* retval = nullptr);
 bool     threads::Detach(ThreadId);
 bool     threads::IsAlive(ThreadId);
 ThreadId threads::CurrentId();
-void     threads::AddStartHook(std::function<void(Cpu&)>);   // en el hilo nuevo, antes de entry
-void     threads::AddExitHook(std::function<void(Cpu&)>);    // en el hilo, al terminar (destructores de pthread_key, JNI detach)
-void     threads::DetachCurrent();                           // para hilos host adjuntados implícitamente
+void     threads::AddStartHook(std::function<void(Cpu&)>);   // on the new thread, before entry
+void     threads::AddExitHook(std::function<void(Cpu&)>);    // on the thread, when it ends (pthread_key destructors, JNI detach)
+void     threads::DetachCurrent();                           // for implicitly attached host threads
 ```
 
-Hilos host adjuntados implícitamente (los que llaman a `call_guest`/`Cpu::Current()` sin venir de `threads::Create`): los
-*start hooks* corren en el attach; los *exit hooks* **solo** si el hilo llama a `threads::DetachCurrent()` (si el hilo host
-termina sin llamarlo, su `Cpu` se destruye sin ejecutar hooks).
+Implicitly attached host threads (those that call `call_guest`/`Cpu::Current()` without coming from `threads::Create`): the
+*start hooks* run on attach; the *exit hooks* run **only** if the thread calls `threads::DetachCurrent()` (if the host thread
+ends without calling it, its `Cpu` is destroyed without running hooks).
 
 `pthread_create` (T4):
 
@@ -346,13 +349,13 @@ int hle_pthread_join(uint32_t t, zw::GPtr<uint32_t> ret) {
 }
 ```
 
-- El hilo principal del juego es simplemente el hilo host que llama a `call_guest` (T8); `glf` exige que
-  `step/resize/stateChanged/getViewSettings` vayan en el mismo hilo host.
-- Mutex/cond/keys de pthread: tablas laterales en el host (T4), con primitivas host (`std::mutex`, `SRWLOCK`…). Las claves
-  TLS pueden guardarse en `cpu.user(UserSlot::Pthread)`.
-- Si un hilo creado con `Create` muere por `GuestFault`/`GuestExit`, se llama a `cpu::SetFatalHandler` /
-  `cpu::SetExitHandler` (por defecto: log y `_Exit`).
-- Máximo `threads::kMaxThreads` (128) hilos guest vivos.
+- The game's main thread is simply the host thread that calls `call_guest` (T8); `glf` requires
+  `step/resize/stateChanged/getViewSettings` to run on the same host thread.
+- pthread mutexes/conds/keys: side tables on the host (T4), with host primitives (`std::mutex`, `SRWLOCK`…). TLS keys can
+  be stored in `cpu.user(UserSlot::Pthread)`.
+- If a thread created with `Create` dies from `GuestFault`/`GuestExit`, `cpu::SetFatalHandler` /
+  `cpu::SetExitHandler` is called (default: log and `_Exit`).
+- At most `threads::kMaxThreads` (128) live guest threads.
 
 ---
 
@@ -360,29 +363,29 @@ int hle_pthread_join(uint32_t t, zw::GPtr<uint32_t> ret) {
 
 ```cpp
 zw::GuestMemory::Init();
-zw::hle::libc::Register(); /* gles, audio, jni... */          // handlers + DefineData ANTES de cargar
-zw::loader::Module* m = zw::loader::Load("…/libZombieWood.so"); // mapea + reloca + resuelve; no ejecuta nada
-zw::loader::RunInit(*m);                                       // .init_array (552 constructores), en este hilo
+zw::hle::libc::Register(); /* gles, audio, jni... */          // handlers + DefineData BEFORE loading
+zw::loader::Module* m = zw::loader::Load("…/libZombieWood.so"); // maps + relocates + resolves; runs nothing
+zw::loader::RunInit(*m);                                       // .init_array (552 constructors), on this thread
 auto ver = zw::loader::CallJniOnLoad(*m, java_vm_gaddr);       // JNI_OnLoad(vm, NULL) -> 0x10004
 ```
 
-- Resolución de un símbolo indefinido: el propio módulo → otras libs cargadas (orden de carga) → dato HLE
-  (`STT_OBJECT`) → stub HLE (`STT_FUNC`, siempre se resuelve, tenga o no handler).
-- `Module::FindExport(nombre)` / `loader::FindSymbol(nombre)` → dirección lista para `call_guest` (bit Thumb incluido), 0
-  si no existe. Los 35 581 símbolos del `.so` están disponibles (p. ej. `VoxSetAndroidAPILevel`, `nativeExit`, `mJavaVM`).
-- `Module::imports()` → cómo se resolvió cada import (`Via`, `has_handler`). `Module::exidx()/exidx_count()`.
+- Resolving an undefined symbol: the module itself → other loaded libs (in load order) → HLE data
+  (`STT_OBJECT`) → HLE stub (`STT_FUNC`, always resolves, with or without a handler).
+- `Module::FindExport(name)` / `loader::FindSymbol(name)` → an address ready for `call_guest` (Thumb bit included), 0
+  if it does not exist. All 35,581 symbols of the `.so` are available (e.g. `VoxSetAndroidAPILevel`, `nativeExit`, `mJavaVM`).
+- `Module::imports()` → how each import was resolved (`Via`, `has_handler`). `Module::exidx()/exidx_count()`.
 - `loader::addr2sym(addr)` / `zw::debug::addr2sym(addr)` → `"libZombieWood.so!_ZN3glf3App6UpdateEv+0x1c"`, `"hle!malloc"`.
-- `Module::base()`: `0x10000000` para la primera lib ⇒ las direcciones de ANALYSIS.md se obtienen restando la base.
-- Relocaciones: `R_ARM_RELATIVE`, `ABS32`, `GLOB_DAT`, `JUMP_SLOT`, `REL32`, `NONE` (REL). Todo se resuelve en la carga.
+- `Module::base()`: `0x10000000` for the first lib ⇒ ANALYSIS.md addresses are obtained by subtracting the base.
+- Relocations: `R_ARM_RELATIVE`, `ABS32`, `GLOB_DAT`, `JUMP_SLOT`, `REL32`, `NONE` (REL). Everything is resolved at load time.
 
 ---
 
-## 7. JNI y otras vtables guest (T6/T7)
+## 7. JNI and other guest vtables (T6/T7)
 
-Un `JNIEnv*` es un puntero guest a un puntero guest a una tabla de punteros a función guest. Cada entrada es un stub HLE:
+A `JNIEnv*` is a guest pointer to a guest pointer to a table of guest function pointers. Each entry is an HLE stub:
 
 ```cpp
-// Handlers con la firma real del slot (softfp y varargs los resuelve el marshalling):
+// Handlers with the slot's real signature (marshalling handles softfp and varargs):
 zw::gaddr jni_FindClass(zw::gaddr env, const char* name);
 uint32_t  jni_CallStaticIntMethod(zw::gaddr env, zw::gaddr cls, zw::gaddr mid, zw::Varargs va);
 uint32_t  jni_CallStaticIntMethodV(zw::gaddr env, zw::gaddr cls, zw::gaddr mid, zw::VaList ap);
@@ -397,48 +400,48 @@ void zw::jni::Register() {
 }
 ```
 
-- Nombres de stub: cualquier cadena única (`"JNIEnv::X"`, `"JavaVM::GetEnv"`, `"SLEngineItf::CreateAudioPlayer"`); aparecen
-  tal cual en trazas y backtraces (`hle!JNIEnv::FindClass`).
-- Slots no implementados: rellénalos con `hle::StubFor("JNIEnv::slot_123")` sin registrar handler → aviso con nombre y LR la
-  primera vez, devuelve 0.
-- `JNIEnv` por hilo: `cpu.user(UserSlot::Jni)`; limpieza en `threads::AddExitHook`.
-- Java falso → nativo: `zw::call_guest<R>(zw::loader::FindSymbol("Java_…"), env, clazz, args…)` (reentrante, §3).
-- Callbacks de OpenSL/AudioTrack: **no** llames a `call_guest` desde el callback de audio de SDL con el hilo de SDL si
-  puedes evitarlo; crea un hilo guest (`threads::Create` con un stub propio como entry, o un `std::thread` host que use
-  `call_guest`: se adjunta solo y debe llamar a `threads::DetachCurrent()` al acabar).
+- Stub names: any unique string (`"JNIEnv::X"`, `"JavaVM::GetEnv"`, `"SLEngineItf::CreateAudioPlayer"`); they appear
+  as-is in traces and backtraces (`hle!JNIEnv::FindClass`).
+- Unimplemented slots: fill them with `hle::StubFor("JNIEnv::slot_123")` without registering a handler → a warning with the
+  name and LR the first time, returns 0.
+- Per-thread `JNIEnv`: `cpu.user(UserSlot::Jni)`; cleanup in `threads::AddExitHook`.
+- Fake Java → native: `zw::call_guest<R>(zw::loader::FindSymbol("Java_…"), env, clazz, args…)` (reentrant, §3).
+- OpenSL/AudioTrack callbacks: do **not** call `call_guest` from SDL's audio callback on SDL's thread if you can avoid
+  it; create a guest thread (`threads::Create` with your own stub as entry, or a host `std::thread` that uses
+  `call_guest`: it attaches automatically and must call `threads::DetachCurrent()` when done).
 
 ---
 
-## 8. Depuración (`zw::debug`, `cpu/cpu.h`)
+## 8. Debugging (`zw::debug`, `cpu/cpu.h`)
 
 ```cpp
 std::string         debug::addr2sym(gaddr);
-std::vector<gaddr>  debug::Backtrace(const Cpu&, size_t max = 32);   // heurístico (escaneo de pila validando BL/BLX)
-std::string         debug::DumpState(const Cpu&);                    // registros + backtrace simbolizado
+std::vector<gaddr>  debug::Backtrace(const Cpu&, size_t max = 32);   // heuristic (stack scan validating BL/BLX)
+std::string         debug::DumpState(const Cpu&);                    // registers + symbolized backtrace
 void                debug::SetTraceImports(bool);
 ```
 
-Ante un fallo guest (memoria no mapeada, instrucción indefinida, `bkpt`) el runtime escribe `DumpState` en el log y lanza
-`GuestFault`. Ante una violación de acceso del host dentro de un handler (puntero guest inválido) escribe el import en curso,
-la dirección guest implicada y `DumpState`, y termina el proceso.
+On a guest fault (unmapped memory, undefined instruction, `bkpt`) the runtime writes `DumpState` to the log and throws
+`GuestFault`. On a host access violation inside a handler (invalid guest pointer) it writes the import in progress, the
+guest address involved and `DumpState`, and terminates the process.
 
-Variables de entorno: `ZW_TRACE_IMPORTS`, `ZW_TRACE_FILTER`, `ZW_ABORT_ON_UNIMPLEMENTED`, `ZW_TRACE_INIT=1` (una línea por
-constructor de `.init_array`), `ZW_JIT_CACHE_MB` (caché de código por hilo, 64 por defecto), `ZW_DEBUG_VEH=1` (vuelca cada
-excepción del host de primera oportunidad), `ZW_FASTMEM=0` / `ZW_FASTMEM_EXCLUSIVE=0` (ver abajo).
+Environment variables: `ZW_TRACE_IMPORTS`, `ZW_TRACE_FILTER`, `ZW_ABORT_ON_UNIMPLEMENTED`, `ZW_TRACE_INIT=1` (one line per
+`.init_array` constructor), `ZW_JIT_CACHE_MB` (per-thread code cache, 64 by default), `ZW_DEBUG_VEH=1` (dumps every
+first-chance host exception), `ZW_FASTMEM=0` / `ZW_FASTMEM_EXCLUSIVE=0` (see below).
 
-**Acceso a memoria del JIT.** Por defecto dynarmic usa *fastmem* (`host = base + guest`, los fallos de página del host se
-convierten en `GuestFault`) y `LDREX/STREX` por `cmpxchg`. `ZW_FASTMEM=0` cambia a tabla de páginas + monitor exclusivo global
-(más lento, sin excepciones del host; útil para depurar); `ZW_FASTMEM_EXCLUSIVE=0` mantiene fastmem pero pasa los exclusivos
-por el monitor. Fastmem necesita un parche local a dynarmic que aplica `cmake/ZwDependencies.cmake` en cada configure: su
-manejador de excepciones de Windows reservaba 8 bytes de pila en vez del *shadow space* de la ABI x64 (`sub rsp, 8` →
-`sub rsp, 0x28`), lo que con MSVC corrompía la dirección de retorno en el primer fallo de fastmem.
-Medido en win-debug: bucle atómico de 2 hilos (4 M de `LDREX/STREX` contendidos) 8.2–8.5 s con tabla de páginas frente a
-1.6–3.5 s con fastmem; los 552 constructores de `--load-only` no cambian (6–8 s en ambos modos: domina la compilación del JIT
-en un dynarmic sin optimizar).
+**JIT memory access.** By default dynarmic uses *fastmem* (`host = base + guest`, host page faults become `GuestFault`) and
+`LDREX/STREX` via `cmpxchg`. `ZW_FASTMEM=0` switches to a page table + the global exclusive monitor (slower, no host
+exceptions; useful for debugging); `ZW_FASTMEM_EXCLUSIVE=0` keeps fastmem but routes exclusives through the monitor.
+Fastmem needs a local patch to dynarmic that `cmake/ZwDependencies.cmake` applies on every configure: its Windows exception
+handler reserved 8 bytes of stack instead of the x64 ABI's *shadow space* (`sub rsp, 8` → `sub rsp, 0x28`), which with MSVC
+corrupted the return address on the first fastmem fault.
+Measured in win-debug: a 2-thread atomic loop (4 M contended `LDREX/STREX`) 8.2–8.5 s with the page table versus
+1.6–3.5 s with fastmem; the 552 constructors of `--load-only` do not change (6–8 s in both modes: compiling the JIT in an
+unoptimized dynarmic dominates). (Later, dynarmic was built optimized in Debug too: 2.0 s in debug, 0.22 s in release.)
 
 ---
 
-## 9. Arranque de referencia (T8)
+## 9. Reference startup (T8)
 
 ```cpp
 zw::GuestMemory::Init();
@@ -447,39 +450,40 @@ auto* m = zw::loader::Load(so_path);
 try {
   zw::loader::RunInit(*m);
   zw::loader::CallJniOnLoad(*m, zw::jni::JavaVM());
-  // ... secuencia de ANALYSIS.md §4 con call_guest ...
+  // ... ANALYSIS.md §4 sequence with call_guest ...
 } catch (const zw::GuestFault& f) { zw::log::Error("{}", f.what()); }
-  catch (const zw::GuestExit& e)  { /* salir con e.code */ }
+  catch (const zw::GuestExit& e)  { /* exit with e.code */ }
 ```
 
 ---
 
-## 10. `--load-only` y HLE mínima de arranque (`loader/load_only.h`)
+## 10. `--load-only` and minimal startup HLE (`loader/load_only.h`)
 
 ```
-zombiewood --load-only <ruta .so> [más .so...]        (o el ejecutable suelto zw_loadonly, mismos argumentos)
+zombiewood --load-only <path to .so> [more .so...]        (or the standalone zw_loadonly executable, same arguments)
 ```
 
-Carga las libs en orden, imprime segmentos/relocaciones/imports (con la lista de los que no tienen handler), ejecuta
-`.init_array` y `JNI_OnLoad` con un `JavaVM` falso y resume qué imports sin handler se llegaron a invocar. Código de salida 0
-si llegó al final. Útil para T4–T7: al enlazar vuestro `Register()` antes de `RunLoadOnly`, la lista de "sin handler" baja.
+Loads the libs in order, prints segments/relocations/imports (with the list of those without a handler), runs
+`.init_array` and `JNI_OnLoad` with a fake `JavaVM`, and summarizes which handler-less imports actually got called. Exit
+code 0 if it reached the end. Useful for T4–T7: by linking your `Register()` before `RunLoadOnly`, the "without handler"
+list shrinks.
 
-- `loader::bootstrap::Register()`: ~100 imports mínimos de bionic (malloc, `mem*`/`str*`, `printf` básico, `pthread_key_*`,
-  `__cxa_*`, tiempo, libm, tablas `_ctype_`…) **solo para nombres que nadie haya registrado**. Es andamiaje de T3 para
-  `--load-only` y tests; no sustituye a T4 (mutex/cond son no-ops, sin stdio). T8 no debe llamarla.
-- `loader::bootstrap::FakeJavaVM()`: `JavaVM*` guest con `GetEnv/AttachCurrentThread` y un `JNIEnv` de 232 slots genéricos
-  que registran cada llamada (`[jni falso] … FindClass(…)`) y devuelven handles ficticios. T7 lo reemplaza.
+- `loader::bootstrap::Register()`: ~100 minimal bionic imports (malloc, `mem*`/`str*`, basic `printf`, `pthread_key_*`,
+  `__cxa_*`, time, libm, `_ctype_` tables…) **only for names nobody else has registered**. It is T3's scaffolding for
+  `--load-only` and tests; it does not replace T4 (mutex/cond are no-ops, no stdio). T8 must not call it.
+- `loader::bootstrap::FakeJavaVM()`: a guest `JavaVM*` with `GetEnv/AttachCurrentThread` and a `JNIEnv` with 232 generic slots
+  that log every call (`[jni falso] … FindClass(…)`) and return dummy handles. T7 replaces it.
 
-Estado medido con solo la HLE mínima (win-debug): `libZombieWood.so` carga en `0x10000000` (56 376 RELATIVE, 6 467 ABS32,
-18 GLOB_DAT, 356 JUMP_SLOT), los 552 constructores se ejecutan sin fallos y `JNI_OnLoad` devuelve `0x10004`
-(`AndroidOS::Init` encuentra `SUtils`, `Device` y `GameInstaller`). Durante ese arranque el `.so` solo invoca tres imports sin
-handler: `wctob`, `btowc` y `wctype` (inicialización de `std::locale`/`ctype<wchar_t>` de gnustl).
+State measured with only the minimal HLE (win-debug): `libZombieWood.so` loads at `0x10000000` (56,376 RELATIVE, 6,467 ABS32,
+18 GLOB_DAT, 356 JUMP_SLOT), the 552 constructors run without faults and `JNI_OnLoad` returns `0x10004`
+(`AndroidOS::Init` finds `SUtils`, `Device` and `GameInstaller`). During that startup the `.so` only calls three imports
+without a handler: `wctob`, `btowc` and `wctype` (gnustl's `std::locale`/`ctype<wchar_t>` initialization).
 
 ---
 
 ## Audio (T6) — `hle/audio/audio_track.h`, `hle/audio/audio_hle.h`
 
-Backend C++ puro (sin JNI) de `android.media.AudioTrack` (modo STREAM) sobre SDL2; T7 lo envuelve como clase Java emulada.
+A pure C++ (no JNI) backend for `android.media.AudioTrack` (STREAM mode) on SDL2; T7 wraps it as an emulated Java class.
 CMake: `target_link_libraries(x PRIVATE zw_hle_audio)`; `#include "audio_track.h"` (namespace `zw::audio`).
 
 ```cpp
@@ -488,40 +492,42 @@ int  audio::min_buffer_size(int rate, int channelCfg, int encoding);   // bytes,
 
 audio::Track t(streamType, rate, channelCfg, encoding, bufferBytes, mode = kModeStream);
 // channelCfg: kChannelOutMono=4 / kChannelOutStereo=12 (0xC); encoding: kEncodingPcm16=2 / kEncodingPcm8=3
-t.play(); t.pause(); t.stop() /*descarta la cola*/; t.release() /*despierta writers; idempotente*/;
-int n = t.write(const void* pcm, int bytes);  // bytes aceptados; -1 si liberada
+t.play(); t.pause(); t.stop() /*discards the queue*/; t.release() /*wakes writers; idempotent*/;
+int n = t.write(const void* pcm, int bytes);  // bytes accepted; -1 if released
 int s = t.play_state();                        // kStateStopped=1, kStatePaused=2, kStatePlaying=3
 ```
 
-- `write` copia a una cola y **bloquea** mientras haya > ~100 ms en cola y la pista esté en `PLAYING` (y no en pausa global).
-  Pausada/parada/liberada **nunca** bloquea (acepta hasta ~200 ms y devuelve lo aceptado). `release()` desbloquea a un writer.
-- SDL abre un dispositivo por pista (formato nativo de la pista; SDL convierte rate/canales/bits). Si no hay dispositivo, un hilo
-  consume a tiempo real (el juego no se bloquea). Un *underrun* emite silencio.
-- Control global (menú T9, `nativeVoxMute`, minimizar): `audio::set_master_volume(0..1)`, `set_muted(bool)`, `set_global_paused(bool)`
-  (pausa/reanuda todas las pistas sin cambiar su `play_state`). Se aplican en el callback, afectan también a datos ya encolados.
-- Tests/CI: `audio::set_driver("dummy")` antes de crear la primera pista; `audio::set_tap(fn)` observa lo que va al dispositivo.
-- **OpenSL ES** (`zw::hle::audio::Register()`, `audio_hle.h`; T8 la llama antes de `loader::Load`): define `SL_IID_ENGINE`,
-  `SL_IID_PLAY`, `SL_IID_BUFFERQUEUE` (variables puntero a `SLInterfaceID_` de 16 bytes con los GUID reales) y registra
-  `slCreateEngine`, que devuelve `SL_RESULT_FEATURE_UNSUPPORTED` (12) y pone `*pEngine = NULL`. El juego usa `AudioTrack`
-  (`s_androidAPILevel = 3`), así que OpenSL es camino muerto.
+- `write` copies into a queue and **blocks** while more than ~100 ms is queued and the track is `PLAYING` (and not globally
+  paused). Paused/stopped/released **never** blocks (accepts up to ~200 ms and returns what it accepted). `release()`
+  unblocks a writer.
+- SDL opens one device per track (in the track's native format; SDL converts rate/channels/bits). If there is no device,
+  a thread consumes in real time (the game never blocks). An *underrun* outputs silence.
+- Global control (T9's menu, `nativeVoxMute`, minimizing): `audio::set_master_volume(0..1)`, `set_muted(bool)`,
+  `set_global_paused(bool)` (pauses/resumes every track without changing its `play_state`). Applied in the callback, so it
+  also affects data already queued.
+- Tests/CI: `audio::set_driver("dummy")` before creating the first track; `audio::set_tap(fn)` observes what goes to the device.
+- **OpenSL ES** (`zw::hle::audio::Register()`, `audio_hle.h`; T8 calls it before `loader::Load`): defines `SL_IID_ENGINE`,
+  `SL_IID_PLAY`, `SL_IID_BUFFERQUEUE` (pointer variables to 16-byte `SLInterfaceID_` with the real GUIDs) and registers
+  `slCreateEngine`, which returns `SL_RESULT_FEATURE_UNSUPPORTED` (12) and sets `*pEngine = NULL`. The game uses
+  `AudioTrack` (`s_androidAPILevel = 3`), so OpenSL is a dead path.
 
 ## JNI (T7) — `jni/jni.h`, `jni/java.h`
 
-`target_link_libraries(... zw_jni)` (arrastra `zw_cpu` + `zw_loader`). `zw::jni::Register()` es idempotente; llamarla tras
-`GuestMemory::Init()` y antes de `loader::Load()`.
+`target_link_libraries(... zw_jni)` (pulls in `zw_cpu` + `zw_loader`). `zw::jni::Register()` is idempotent; call it after
+`GuestMemory::Init()` and before `loader::Load()`.
 
-| API | Uso |
+| API | Use |
 |---|---|
-| `jni::JavaVM()` / `jni::Env()` | `JavaVM*` guest (para `CallJniOnLoad`) / `JNIEnv*` del hilo actual. `GetEnv` y `AttachCurrentThread` devuelven siempre 0 + un `JNIEnv` por hilo; `DetachCurrentThread` libera las refs locales del hilo |
-| `jni::call_native<R>(nombre, args…)` | llama a `Java_…` con `(JNIEnv*, jclass, args…)` en el hilo actual (reentrante). `nombre`: simbolo completo, relativo al paquete (`"Game_nativeInit"`, `"GLUtils_SUtils_nativeInit"`) o `"clase/x.metodo"` si vino de `RegisterNatives`. `std::string`/`const char*` → `jstring`. Marco local propio (las refs creadas se liberan al volver). Lanza `std::runtime_error` si no existe; `GuestFault/GuestExit` se propagan |
-| `jni::call_native_obj<R>(nombre, self, …)` | igual para nativos de instancia |
-| `jni::config()` | valores del "dispositivo" (rutas guest, OBB, modelo, GPU `"Adreno (TM) 330"`, idioma, pantalla 1280×720, `prefs_file` para persistir `SUtils.nativeSet/GetPreference`, `assets_dir`). Cambiar **antes** de `Game.nativeInit` (copia las cadenas) |
-| `jni::hooks()` | callbacks al frontend: `create_view` (por defecto llama `GameRenderer.nativeInit(0, screen_w, screen_h, "1.5.3")`), `set_view_settings`, `set_current_context` (def. `true`), `exit` (def. `throw GuestExit{0}`), `play_cinematic` (def. no-op = vídeo saltado), `open_browser`, `keep_screen_on`, `send_to_background`, `show_screen` |
-| `jni::SetAudioTrackBackend(factory)` | `android/media/AudioTrack` delega en un `jni::AudioTrackBackend` (misma forma que `zw::audio::Track` de T6). Por defecto: backend nulo que consume a tiempo real |
-| `jni::Coverage()` / `CoverageReport()` | cada `FindClass`/`Get*ID` pedido por el juego y si está emulado; métodos llamados sin implementación (log `[jni] metodo NO implementado: Clase.metodo(firma)` una vez, retorno 0/null) |
-| `jni::DefineClass(nombre).Static/Virtual/Ctor/StaticField/InstanceField(...)` (`java.h`) | añadir o sustituir métodos Java emulados desde otro módulo |
+| `jni::JavaVM()` / `jni::Env()` | the guest `JavaVM*` (for `CallJniOnLoad`) / the current thread's `JNIEnv*`. `GetEnv` and `AttachCurrentThread` always return 0 + a per-thread `JNIEnv`; `DetachCurrentThread` frees the thread's local refs |
+| `jni::call_native<R>(name, args…)` | calls `Java_…` with `(JNIEnv*, jclass, args…)` on the current thread (reentrant). `name`: the full symbol, relative to the package (`"Game_nativeInit"`, `"GLUtils_SUtils_nativeInit"`) or `"class/x.method"` if it came from `RegisterNatives`. `std::string`/`const char*` → `jstring`. Its own local frame (refs created are freed on return). Throws `std::runtime_error` if it does not exist; `GuestFault/GuestExit` propagate |
+| `jni::call_native_obj<R>(name, self, …)` | the same for instance natives |
+| `jni::config()` | the "device" values (guest paths, OBB, model, GPU `"Adreno (TM) 330"`, language, 1280×720 screen, `prefs_file` to persist `SUtils.nativeSet/GetPreference`, `assets_dir`). Change them **before** `Game.nativeInit` (it copies the strings) |
+| `jni::hooks()` | callbacks into the frontend: `create_view` (by default calls `GameRenderer.nativeInit(0, screen_w, screen_h, "1.5.3")`), `set_view_settings`, `set_current_context` (default `true`), `exit` (default `throw GuestExit{0}`), `play_cinematic` (default no-op = video skipped), `open_browser`, `keep_screen_on`, `send_to_background`, `show_screen` |
+| `jni::SetAudioTrackBackend(factory)` | `android/media/AudioTrack` delegates to a `jni::AudioTrackBackend` (same shape as T6's `zw::audio::Track`). Default: a null backend that consumes in real time |
+| `jni::Coverage()` / `CoverageReport()` | every `FindClass`/`Get*ID` the game requested and whether it is emulated; methods called without an implementation (logged once as `[jni] metodo NO implementado: Class.method(signature)`, returning 0/null) |
+| `jni::DefineClass(name).Static/Virtual/Ctor/StaticField/InstanceField(...)` (`java.h`) | add or replace emulated Java methods from another module |
 
-Adaptador T6 → T7 (T8, ~10 líneas):
+T6 → T7 adapter (T8, ~10 lines):
 
 ```cpp
 struct SdlTrack final : zw::jni::AudioTrackBackend {
@@ -535,56 +541,63 @@ struct SdlTrack final : zw::jni::AudioTrackBackend {
 zw::jni::SetAudioTrackBackend([](int s, int r, int c, int e, int b, int m) { return std::make_unique<SdlTrack>(s, r, c, e, b, m); });
 ```
 
-Modelo: `jobject` = handle `(índice << 2) | tipo` (1 local, 2 global, 3 débil = `GetObjectRefType`); `jmethodID`/`jfieldID` = valores
-opacos en `0x0A…`/`0x0B…` (zona nula: si el guest los desreferencia, falla visible). Arrays primitivos viven en memoria guest
-(`Get*ArrayElements`/`GetPrimitiveArrayCritical` devuelven el puntero directo, `isCopy = 0`). Sin excepciones Java:
-`ExceptionCheck/Occurred` = 0, `Throw*` se registra y se ignora. Clase o método desconocidos: `FindClass`/`Get*ID` nunca devuelven
-0 con un `jclass` válido (ANALYSIS R9).
+Model: `jobject` = handle `(index << 2) | kind` (1 local, 2 global, 3 weak = `GetObjectRefType`); `jmethodID`/`jfieldID` =
+opaque values in `0x0A…`/`0x0B…` (the null zone: if the guest dereferences them, it fails visibly). Primitive arrays live in
+guest memory (`Get*ArrayElements`/`GetPrimitiveArrayCritical` return the direct pointer, `isCopy = 0`). No Java exceptions:
+`ExceptionCheck/Occurred` = 0, `Throw*` is logged and ignored. Unknown class or method: `FindClass`/`Get*ID` never return
+0 with a valid `jclass` (ANALYSIS R9).
 
-Diagnóstico: `zw_jni_loadonly <libZombieWood.so> [--no-extra] [--trace-calls]` ejecuta `.init_array`, `JNI_OnLoad`,
-`nativeSetGPUInfo`, `GL2JNILib.init` (→ `createView` → `GameRenderer.nativeInit`), `Game.nativeInit` y los `nativeInit` opcionales
-con el JNI real, y lista la cobertura.
+Diagnostics: `zw_jni_loadonly <libZombieWood.so> [--no-extra] [--trace-calls]` runs `.init_array`, `JNI_OnLoad`,
+`nativeSetGPUInfo`, `GL2JNILib.init` (→ `createView` → `GameRenderer.nativeInit`), `Game.nativeInit` and the optional
+`nativeInit`s with the real JNI, and lists the coverage.
 
-**Pendiente para T8 (`--load-only` del frontend):** `loader::RunLoadOnly` usa el `bootstrap::FakeJavaVM()` de T3. Para que
-`zombiewood --load-only` use el JNI de T7 basta con (a) añadir a `RunLoadOnly` un parámetro `gaddr java_vm = 0` y usar
-`java_vm ? java_vm : bootstrap::FakeJavaVM()`, y (b) en `main.cpp`: `zw::jni::Register(); return zw::loader::RunLoadOnly(libs,
-zw::jni::JavaVM());`.
+**Pending for T8 (the frontend's `--load-only`):** `loader::RunLoadOnly` uses T3's `bootstrap::FakeJavaVM()`. For
+`zombiewood --load-only` to use T7's JNI it is enough to (a) add a `gaddr java_vm = 0` parameter to `RunLoadOnly` and use
+`java_vm ? java_vm : bootstrap::FakeJavaVM()`, and (b) in `main.cpp`: `zw::jni::Register(); return zw::loader::RunLoadOnly(libs,
+zw::jni::JavaVM());`. (Done in T8, see below.)
 
-## Frontend / integración (T8) — `frontend/game.h`, `frontend/input.h`
+## Frontend / integration (T8) — `frontend/game.h`, `frontend/input.h`
 
-- `zw::RunGame(opts)`: hilo UI (principal) = SDL + pasos 0–7 de ANALYSIS §4; hilo GL = contexto GLES, pasos 8–13 y bucle
-  `GL2JNILib.step` + presentación. Todo el input se inyecta entre frames desde el hilo GL (`Game.nativeOnTouch`,
-  `nativeOnKeyDown/Up`). Minimizar → `GL2JNILib.pause` + `nativeVoxSuspend` + `audio::set_global_paused(true)`; restaurar → lo
-  inverso. Cerrar la ventana → pausa (el juego guarda) y `_Exit` (quedan hilos guest vivos: no hay destrucción ordenada).
-- **Añadido a T5**: `hle::gles::SetDefaultFramebuffer(fbo)`: el framebuffer 0 del guest es un FBO del frontend (RGBA8 +
-  D24S8 a resolución interna) que se copia a la ventana con `glBlitFramebuffer` (letterbox). `glBindFramebuffer(_, 0)` liga
-  ese FBO y `GL_FRAMEBUFFER_BINDING` devuelve 0 cuando está ligado.
-- **Añadido a T3**: `loader::RunLoadOnly(libs, java_vm = 0)`; `zombiewood --load-only` registra la HLE real y usa `jni::JavaVM()`.
-- `jni::config()`: `screen_w/h` = resolución interna, `prefs_file` = `<saves>/zw_prefs.json`, `assets_dir`, `language`;
-  `patch_obb` se vacía si el fichero no existe. Hooks: `send_to_background` minimiza la ventana; `exit` conserva el valor por
-  defecto (`GuestExit`, capturado por el hilo GL); `play_cinematic` sin enganchar (vídeos saltados → T9).
-- `input::Mapper`: punteros 0 = ratón, 1 = stick mover, 2 = stick apuntar, 3+ = botones del HUD, 10+ = dedos reales.
-  Medidas del HUD a 1280×720: sticks en (170,590) y (1108,590), radio ≈ 82 px; son fijos (no flotantes).
-- Medido (win-release, RTX 3060 Laptop, 1280×720): 60 fps con vsync (step 2–9 ms); sin límite ≈ 490–520 fps en menú y
-  130–210 fps en partida. El juego usa tiempo real: no depende de 30/60 fijos.
+- `zw::RunGame(opts)`: UI (main) thread = SDL + steps 0–7 of ANALYSIS §4; GL thread = GLES context, steps 8–13 and the
+  `GL2JNILib.step` loop + presentation. All input is injected between frames from the GL thread (`Game.nativeOnTouch`,
+  `nativeOnKeyDown/Up`). Minimize → `GL2JNILib.pause` + `nativeVoxSuspend` + `audio::set_global_paused(true)`; restore → the
+  reverse. Closing the window → pause (the game saves) and `_Exit` (guest threads remain alive: there is no orderly teardown).
+- **Added to T5**: `hle::gles::SetDefaultFramebuffer(fbo)`: the guest's framebuffer 0 is a frontend FBO (RGBA8 +
+  D24S8 at the internal resolution) copied to the window with `glBlitFramebuffer` (letterbox). `glBindFramebuffer(_, 0)` binds
+  that FBO, and `GL_FRAMEBUFFER_BINDING` returns 0 while it is bound.
+- **Added to T3**: `loader::RunLoadOnly(libs, java_vm = 0)`; `zombiewood --load-only` registers the real HLE and uses `jni::JavaVM()`.
+- `jni::config()`: `screen_w/h` = internal resolution, `prefs_file` = `<saves>/zw_prefs.json`, `assets_dir`, `language`;
+  `patch_obb` is cleared if the file does not exist. Hooks: `send_to_background` minimizes the window; `exit` keeps the
+  default (`GuestExit`, caught by the GL thread); `play_cinematic` left unhooked (videos skipped → T9).
+- `input::Mapper`: pointer 0 = mouse, 1 = move stick, 2 = aim stick, 3+ = HUD buttons, 10+ = real fingers.
+  HUD measurements at 1280×720: sticks at (170,590) and (1108,590), radius ≈ 82 px; they are fixed (not floating).
+- Measured (win-release, RTX 3060 Laptop, 1280×720): 60 fps with vsync (step 2–9 ms); unlimited ≈ 490–520 fps in menus and
+  130–210 fps in matches. The game uses real time: it does not depend on a fixed 30/60.
 
-## Frontend (T9) — instalador, config, menú, vídeos, saves, logs
+## Frontend (T9) — installer, config, menu, videos, saves, logs
 
-- `installer::Install(src, dest, progress)` (`src/installer/installer.h`): lee el APK en streaming (zlib, sin temporales
-  grandes; los `.part` se renombran al terminar), recorre `assets/archiveObbCache.zip.00N` como un ZIP concatenado por
-  cabeceras locales, o copia OBB sueltos. Escribe `dest/{lib,obb,res/raw,assets}` + `install.json`. SHA-256 de la 1.5.3 en
-  `installer.h` (`kShaZombieWood`, OBB main/patch): si no coinciden es **aviso**, no error. Falta del OBB main = error.
-- `<home>/data` = `game_dir` por defecto y también `vfs.data_dir` (= `/sdcard/.../files`): los nombres `lib/ obb/ res/ assets/`
-  no chocan con los ficheros que escribe el juego.
-- `Settings` (`frontend/settings.h`) es el modelo de `zombiewood.json`; `MergeInto` conserva claves desconocidas.
-  `backend` → `ANGLE_DEFAULT_PLATFORM` antes de crear la ventana (ANGLE lo lee con `GetEnvironmentVariable`).
-- `jni::hooks().play_cinematic` = `video::Play` (Media Foundation) en el hilo GL, **dentro** de `GL2JNILib.step`: pausa el
-  audio de Vox (`audio::set_global_paused`), presenta en el framebuffer 0 y restaura el estado GL que toca; al terminar
-  llama al nativo `GLUtils_SUtils_onVideoFinished` (vacío). `logo_hd.mp4` se reproduce antes del paso 8.
-- Menú ImGui: contexto propio en el hilo GL; los eventos SDL viajan crudos en `Ev::raw` y el menú puede quedárselos
-  (`Menu::ProcessEvent`); los "up" siempre llegan al juego. Se dibuja tras el blit del FBO interno, antes del swap
-  (el backend OpenGL3 de ImGui guarda y restaura el estado GL, incluido `GL_ELEMENT_ARRAY_BUFFER` y los atributos).
-- Saves: `saves::Backup` vigila `<home>/saves` (sondeo cada 2 s + antes de `GL2JNILib.pause` y al salir) y guarda la
-  versión anterior de cada fichero sobrescrito en `<home>/saves_backup/<fecha>/` (no toca la HLE de libc).
-- `log`: rotación (`zombiewood.log` + `.1`…`.4`, y en caliente > 32 MiB) y supresión de repeticiones de Info/Debug
-  (>3 en 30 s → resumen `(xN ...)`); `log::Shutdown()` antes de `_Exit`. `ZW_LOG_NODEDUP=1` lo desactiva.
+- `installer::Install(src, dest, progress)` (`src/installer/installer.h`): reads the APK as a stream (zlib, no large
+  temporary files; `.part` files are renamed at the end), walks `assets/archiveObbCache.zip.00N` as a ZIP concatenated by
+  local headers, or copies loose OBBs. Writes `dest/{lib,obb,res/raw,assets}` + `install.json`. The 1.5.3 SHA-256 hashes are
+  in `installer.h` (`kShaZombieWood`, main/patch OBB): a mismatch is a **warning**, not an error. A missing main OBB = error.
+- `<home>/data` = the default `game_dir` and also `vfs.data_dir` (= `/sdcard/.../files`): the names `lib/ obb/ res/ assets/`
+  do not clash with the files the game writes.
+- `Settings` (`frontend/settings.h`) is the model of `zombiewood.json`; `MergeInto` keeps unknown keys.
+  `backend` → `ANGLE_DEFAULT_PLATFORM` before creating the window (ANGLE reads it with `GetEnvironmentVariable`).
+- `jni::hooks().play_cinematic` = `video::Play` (Media Foundation) on the GL thread, **inside** `GL2JNILib.step`: pauses Vox's
+  audio (`audio::set_global_paused`), presents to framebuffer 0 and restores the relevant GL state; when done it calls the
+  native `GLUtils_SUtils_onVideoFinished` (empty). `logo_hd.mp4` plays before step 8.
+- ImGui menu: its own context on the GL thread; SDL events travel raw in `Ev::raw` and the menu can keep them
+  (`Menu::ProcessEvent`); "up" events always reach the game. It is drawn after the internal FBO blit, before the swap
+  (ImGui's OpenGL3 backend saves and restores GL state, including `GL_ELEMENT_ARRAY_BUFFER` and the attributes).
+- Saves: `saves::Backup` watches `<home>/saves` (polling every 2 s + before `GL2JNILib.pause` and on exit) and stores the
+  previous version of each overwritten file in `<home>/saves_backup/<date>/` (it does not touch the libc HLE).
+- `log`: rotation (`zombiewood.log` + `.1`…`.4`, and live past 32 MiB) and suppression of repeated Info/Debug lines
+  (>3 in 30 s → summary `(xN ...)`); `log::Shutdown()` before `_Exit`. `ZW_LOG_NODEDUP=1` disables it.
+
+## Frontend (0.2.0) — cursor
+
+- `frontend/cursor.h`: `cursor::Apply(mode, size)` on the UI thread (`"zombie"` | `"system"`; the closest embedded size
+  32/48/64/96). Data: `RCDATA 102` in the exe (`resources/cursor.rc`, generated by `tools/make_cursor.ps1`; format
+  `"ZWCU"`, version, count, `{size, hot_x, hot_y, offset}` + BGRA pixels). The F1 menu posts a `kUserCursor` SDL user event
+  carrying the size (0 = system) so the GL thread never touches SDL's cursor directly.
