@@ -42,6 +42,11 @@ class Mapper {
   // Suelta todo lo pulsado (pausa / perdida de foco).
   void ReleaseAll(const TouchFn& touch);
 
+  // Estado crudo del mando tal como lo recibe el mapeador (para el probador del menu F1).
+  float pad_axis(int a) const { return a >= 0 && a < 8 ? pad_axes_[a] : 0.f; }
+  bool pad_button(int b) const { return b >= 0 && b < 32 && pad_buttons_[b]; }
+  bool any_pad_input() const { return any_pad_input_; }
+
  private:
   struct Binding {
     std::vector<int> keys, pad_buttons, pad_triggers;
@@ -70,12 +75,18 @@ class Mapper {
   static Binding ParseBinding(const nlohmann::json& j);
   static void ParseStick(const nlohmann::json& j, Stick& s);
   bool Pressed(const Binding& b) const;
+  bool Hit(const Binding& b) const;  // pulsado en algun momento desde el ultimo Update (aunque ya se soltara)
   bool KeyDown(int sc) const { return sc >= 0 && sc < 512 && keys_[sc]; }
   void UpdateStick(Stick& s, float vx, float vy, const TouchFn& touch);
 
   int w_ = 1280, h_ = 720;
   bool keys_[512] = {};
   bool pad_buttons_[32] = {};
+  // v0.2.2: pulsaciones "enganchadas" hasta el siguiente Update. Antes, pulsar y soltar dentro del mismo
+  // frame se perdia (bug B2: el primer Esc no hacia nada; toques rapidos de boton del mando ignorados).
+  bool key_hit_[512] = {};
+  bool pad_hit_[32] = {};
+  bool any_pad_input_ = false;
   float pad_axes_[8] = {};
   float deadzone_ = 0.25f, trigger_threshold_ = 0.4f;
   bool mouse_touch_ = true;

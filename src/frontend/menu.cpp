@@ -3,6 +3,7 @@
 #include <GLES2/gl2.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <format>
 #include <vector>
@@ -13,6 +14,7 @@
 #include "core/paths.h"
 #include "frontend/input.h"
 #include "frontend/settings.h"
+#include "hle/audio/audio_track.h"
 #include "imgui.h"
 
 namespace zw {
@@ -35,6 +37,37 @@ std::string Join(const nlohmann::json& arr) {
   if (!arr.is_array()) return s;
   for (const auto& k : arr)
     if (k.is_string()) s += (s.empty() ? "" : ", ") + k.get<std::string>();
+  return s;
+}
+
+// ¿Hay un mando de PlayStation conectado? (para mostrar Cruz/Circulo/L1... en vez de a/b/leftshoulder).
+bool PlayStationPad() {
+  for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+    if (!SDL_IsGameController(i)) continue;
+    const auto t = SDL_GameControllerTypeForIndex(i);
+    if (t == SDL_CONTROLLER_TYPE_PS3 || t == SDL_CONTROLLER_TYPE_PS4 || t == SDL_CONTROLLER_TYPE_PS5) return true;
+  }
+  return false;
+}
+
+std::string PadLabel(const std::string& n, bool ps) {
+  if (!ps) return n;
+  static const std::pair<const char*, const char*> kPs[] = {
+      {"a", "Cruz"}, {"b", "Circulo"}, {"x", "Cuadrado"}, {"y", "Triangulo"}, {"leftshoulder", "L1"},
+      {"rightshoulder", "R1"}, {"lefttrigger", "L2"}, {"righttrigger", "R2"}, {"leftstick", "L3"},
+      {"rightstick", "R3"}, {"back", "Create"}, {"start", "Options"}, {"guide", "PS"}, {"touchpad", "Touchpad"},
+      {"dpup", "Cruceta arriba"}, {"dpdown", "Cruceta abajo"}, {"dpleft", "Cruceta izq."}, {"dpright", "Cruceta der."},
+      {"misc1", "Mute"}};
+  for (const auto& [k, v] : kPs)
+    if (n == k) return v;
+  return n;
+}
+
+std::string JoinPad(const nlohmann::json& arr, bool ps) {
+  std::string s;
+  if (!arr.is_array()) return s;
+  for (const auto& k : arr)
+    if (k.is_string()) s += (s.empty() ? "" : ", ") + PadLabel(k.get<std::string>(), ps);
   return s;
 }
 
@@ -109,6 +142,15 @@ bool Menu::ProcessEvent(const SDL_Event& e) {
   ImGui::SetCurrentContext(ctx_);
   // Captura para remapear: la siguiente tecla / boton de mando es la asignacion.
   if (!capture_.empty() && (e.type == SDL_KEYDOWN || e.type == SDL_CONTROLLERBUTTONDOWN)) {
+    if (!wizard_.empty() && e.type == SDL_KEYDOWN) {  // el asistente solo acepta el mando; Esc lo cancela
+      if (e.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+        wizard_.clear();
+        capture_.clear();
+        status_ = "Asistente cancelado";
+        status_until_ = ImGui::GetTime() + 3;
+      }
+      return true;
+    }
     auto cfg = EffectiveInput(s_->input);
     std::string key, pad;
     if (e.type == SDL_KEYDOWN) key = SDL_GetScancodeName(e.key.keysym.scancode);
@@ -132,6 +174,7 @@ bool Menu::ProcessEvent(const SDL_Event& e) {
     status_until_ = ImGui::GetTime() + 3;
     capture_.clear();
     Changed();
+    if (!wizard_.empty()) WizardAdvance();
     return true;
   }
   ImGui_ImplSDL2_ProcessEvent(&e);
@@ -355,6 +398,18 @@ void Menu::DrawAudio() {
     act_.apply_audio();
     Changed();
   }
+  ImGui::Separator();
+  static const char* kLatIds[] = {"low", "normal", "safe"};
+  static const char* kLatNames[] = {"Baja (80 ms)", "Normal (150 ms)", "Segura (250 ms)"};
+  int li = 1;
+  for (int i = 0; i < 3; ++i)
+    if (s_->audio_latency == kLatIds[i]) li = i;
+  if (ImGui::Combo("Latencia de audio", &li, kLatNames, 3)) {
+    s_->audio_latency = kLatIds[li];
+    Changed();
+  }
+  ImGui::TextDisabled("Si el audio se corta, usa Segura. Se aplica al reiniciar.");
+  ImGui::Text("Cortes de audio en esta sesion: %llu", (unsigned long long)audio::underrun_count());
   ImGui::End();
 }
 
@@ -363,11 +418,30 @@ void Menu::DrawControls() {
   ImGui::SetNextWindowPos(ImVec2(60, 50), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Controles", &show_controls_)) return ImGui::End();
   auto cfg = EffectiveInput(s_->input);
-  if (!capture_.empty())
+  bool changed = false;
+  const bool ps = PlayStationPad();
+  DrawGamepad(cfg, changed);
+  ImGui::Separator();
+  auto capture_label = [&](const std::string& id) -> std::string {
+    const auto dot = id.find('.');
+    if (dot == std::string::npos) return id;
+    const std::string grp = id.substr(0, dot);
+    const std::size_t i = static_cast<std::size_t>(std::atoi(id.c_str() + dot + 1));
+    if (grp == "buttons" && cfg["buttons"].is_array() && i < cfg["buttons"].size())
+      return "Boton HUD: " + cfg["buttons"][i].value("name", std::string("?"));
+    if (grp == "android_keys" && cfg["android_keys"].is_array() && i < cfg["android_keys"].size()) {
+      const int c = cfg["android_keys"][i].value("code", 0);
+      return c == 4 ? "Atras (BACK)" : c == 82 ? "Menu (MENU)" : std::format("Tecla Android {}", c);
+    }
+    return id;
+  };
+  if (!capture_.empty() && !wizard_.empty())
+    ImGui::TextColored(ImVec4(1, 0.85f, 0.2f, 1), "Asistente (%zu/%zu): pulsa en el MANDO el boton para \"%s\"  (Esc cancela)",
+                       wizard_pos_ + 1, wizard_.size(), capture_label(capture_).c_str());
+  else if (!capture_.empty())
     ImGui::TextColored(ImVec4(1, 0.85f, 0.2f, 1), "Pulsa una tecla o un boton del mando para \"%s\"...", capture_.c_str());
   else
     ImGui::TextDisabled("\"Cambiar\" sustituye; \"+\" anade otra tecla/boton; \"x\" borra.");
-  bool changed = false;
   auto capture_btn = [&](const std::string& id, bool add) {
     ImGui::PushID((id + (add ? "+" : "=")).c_str());
     const bool waiting = capture_ == id && capture_add_ == add;
@@ -411,7 +485,7 @@ void Menu::DrawControls() {
         ImGui::TableNextColumn();
         ImGui::TextUnformatted(Join(item["keys"]).c_str());
         ImGui::TableNextColumn();
-        ImGui::TextUnformatted(Join(item["pad"]).c_str());
+        ImGui::TextUnformatted(JoinPad(item["pad"], ps).c_str());
         ImGui::TableNextColumn();
         capture_btn(id, false);
         ImGui::SameLine();
@@ -464,6 +538,80 @@ void Menu::DrawControls() {
     Changed();
   }
   ImGui::End();
+}
+
+void Menu::WizardAdvance() {
+  if (++wizard_pos_ < wizard_.size()) {
+    capture_ = wizard_[wizard_pos_];
+    capture_add_ = false;
+  } else {
+    wizard_.clear();
+    capture_.clear();
+    status_ = "Mando configurado. Prueba los botones en la partida.";
+    status_until_ = ImGui::GetTime() + 5;
+  }
+}
+
+void Menu::DrawGamepad(nlohmann::json& cfg, bool& changed) {
+  if (!ImGui::CollapsingHeader("Mando", ImGuiTreeNodeFlags_DefaultOpen)) return;
+  const bool ps = PlayStationPad();
+  int pads = 0;
+  for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+    const char* name = SDL_IsGameController(i) ? SDL_GameControllerNameForIndex(i) : SDL_JoystickNameForIndex(i);
+    ImGui::BulletText("%s%s", name ? name : "?", SDL_IsGameController(i) ? "" : "  (sin mapeo: modo crudo)");
+    ++pads;
+  }
+  if (!pads) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "No hay ningun mando conectado.");
+
+  // Probador en vivo: lo que recibe el juego.
+  const float lx = mapper_->pad_axis(SDL_CONTROLLER_AXIS_LEFTX), ly = mapper_->pad_axis(SDL_CONTROLLER_AXIS_LEFTY);
+  const float rx = mapper_->pad_axis(SDL_CONTROLLER_AXIS_RIGHTX), ry = mapper_->pad_axis(SDL_CONTROLLER_AXIS_RIGHTY);
+  ImGui::Text("Stick izq. %+.2f %+.2f   Stick der. %+.2f %+.2f   %s %.2f  %s %.2f", lx, ly, rx, ry, ps ? "L2" : "LT",
+              mapper_->pad_axis(SDL_CONTROLLER_AXIS_TRIGGERLEFT), ps ? "R2" : "RT", mapper_->pad_axis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT));
+  std::string held;
+  for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b)
+    if (mapper_->pad_button(b))
+      if (const char* n = SDL_GameControllerGetStringForButton(static_cast<SDL_GameControllerButton>(b)))
+        held += (held.empty() ? "" : " ") + PadLabel(n, ps);
+  ImGui::Text("Botones pulsados: %s", held.empty() ? "-" : held.c_str());
+  if (pads && !mapper_->any_pad_input())
+    ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1),
+                       "Aun no llega nada del mando. Si pulsas y no cambia: cierra Steam/DS4Windows o usa el driver \"Compatibilidad\".");
+
+  // Sticks: cual mueve y cual apunta.
+  bool swap = cfg["move_stick"].value("pad_stick", std::string("left")) == "right";
+  if (ImGui::Checkbox("Intercambiar sticks (derecho = mover, izquierdo = apuntar)", &swap)) {
+    cfg["move_stick"]["pad_stick"] = swap ? "right" : "left";
+    cfg["aim_stick"]["pad_stick"] = swap ? "left" : "right";
+    changed = true;
+  }
+  // Driver.
+  static const char* kDrv[] = {"auto", "compat"};
+  static const char* kDrvNames[] = {"Automatico (recomendado)", "Compatibilidad (sin HIDAPI)"};
+  int di = s_->pad_driver == "compat" ? 1 : 0;
+  if (ImGui::Combo("Driver de mandos", &di, kDrvNames, 2)) {
+    s_->pad_driver = kDrv[di];
+    Changed();
+  }
+  ImGui::TextDisabled("El driver se aplica al reiniciar el juego.");
+  // Asistente.
+  if (ImGui::Button(wizard_.empty() ? "Asistente: mapear con el mando" : "Cancelar asistente")) {
+    if (wizard_.empty()) {
+      for (std::size_t i = 0; cfg["buttons"].is_array() && i < cfg["buttons"].size(); ++i) wizard_.push_back(std::format("buttons.{}", i));
+      for (std::size_t i = 0; cfg["android_keys"].is_array() && i < cfg["android_keys"].size(); ++i)
+        wizard_.push_back(std::format("android_keys.{}", i));
+      wizard_pos_ = 0;
+      if (!wizard_.empty()) {
+        capture_ = wizard_[0];
+        capture_add_ = false;
+      }
+    } else {
+      wizard_.clear();
+      capture_.clear();
+    }
+  }
+  ImGui::SameLine();
+  ImGui::TextDisabled("Pide cada accion en orden; los sticks se configuran arriba.");
 }
 
 void Menu::DrawAbout(const MenuStats& st) {

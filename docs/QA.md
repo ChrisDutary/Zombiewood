@@ -80,3 +80,13 @@ B1 fix.
 | 0.2.0 zip extracted into an empty folder, 900 frames | OK | exits with code 0; log: `cursor: zombi 48px (hotspot 1,0)` |
 | Cursor visible over the window, on/off and size changes from F1 | NOT TESTED by eye | applied via `SDL_SetCursor` on the UI thread; pending visual confirmation from the user |
 | Without the resource (`resources/zombiewood_cursor.bin` missing) | OK by design | CMake does not add `cursor.rc`; the game uses the Windows cursor |
+
+## v0.2.2 (fix/v0.2.2 branch) — input and audio fixes
+
+| Test | Result | Evidence / notes |
+|---|---|---|
+| `win-release` build + ctest | OK | 8/8 tests (including `hle_audio` with the new latency/priming logic) |
+| **B2: instant Esc/BACK taps** (`ui key Escape` / `ui pad b`: press and release in the same frame) | ✅ Fixed | 0.2.1: **0 of 3** reached the game; 0.2.2: **3 of 3** (`[input] tecla Android 4` in the log) |
+| Audio dropouts during the first ~25 s (muted run, `--frames=1500`) | ✅ Improved | low (80 ms): 2 · **normal (150 ms, default): 1** · safe (250 ms): 0. Each dropout is now a short silence (re-priming) instead of repeated crackling |
+| DualSense over USB detected | OK | `mando conectado: DualSense Wireless Controller (tipo PS5, 6 ejes, 17 botones, … driver HIDAPI)` |
+| Gamepad buttons/sticks reaching the game, mapping wizard, PS labels | ⏳ Pending user test | needs a person pressing the controller |

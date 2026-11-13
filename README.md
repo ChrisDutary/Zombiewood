@@ -78,6 +78,12 @@ virtual touches.
 Everything can be remapped from **F1 → Controles (Controls)** (*Cambiar* / Change, then press a key or button; *+* adds
 a second binding). `gamecontrollerdb.txt` includes SDL mappings for Windows gamepads; you can add your own.
 
+**Gamepads (0.2.2+):** the *Mando* (Gamepad) section of F1 → Controles shows the connected controller, a live tester and
+PlayStation button names. Use **Asistente: mapear con el mando** (gamepad mapping wizard) to assign each action by
+pressing it on the controller, and *Intercambiar sticks* to swap which stick moves and which aims. If the controller is
+listed but nothing reacts, close Steam/DS4Windows (they can take exclusive control of PlayStation pads) or set
+*Driver de mandos* to *Compatibilidad* and restart.
+
 ## Configuration
 
 The **F1** menu (Zombiewood · Gráficos/Graphics · Audio · Controles/Controls · Carpetas/Folders · Ayuda/Help) saves
@@ -99,7 +105,8 @@ overwrites a save).
 | No videos / logo | Windows N: install the *Media Feature Pack*; or set `"skip_videos": true`. |
 | The installer warns about a different SHA-256 | Your APK/OBB is not the original 1.5.3; it may misbehave. |
 | Stuttering | Disable VSync / try another backend; `fps_limit` 0 = unlimited. Check `logs/zombiewood.log`. |
-| The gamepad does not respond | Check that Windows sees it; add its mapping to `gamecontrollerdb.txt`; remap it in F1. |
+| Choppy or crackling audio | F1 → Audio → *Latencia de audio* (audio latency) = *Segura* (safe) and restart (`"audio_latency": "safe"`). |
+| The gamepad does not respond | Open F1 → Controles → *Mando*: if the tester does not react, close Steam/DS4Windows or set the driver to *Compatibilidad* and restart; then use the mapping wizard. |
 | "Sending TapJoy request… / Response not valid" messages in the log | Normal without a network; they are summarized automatically. |
 
 If something fails, attach `logs/zombiewood.log`. `ZW_TRACE_INPUT=1` traces input.

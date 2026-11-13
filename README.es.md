@@ -73,6 +73,11 @@ El juego solo entiende toques y las teclas BACK/MENU de Android; el port traduce
 Todo es remapeable desde **F1 → Controles** (botón *Cambiar* y pulsa una tecla o botón; *+* añade un segundo enlace).
 `gamecontrollerdb.txt` incluye mapeos SDL de mandos de Windows; puedes añadir los tuyos.
 
+**Mandos (0.2.2+):** la sección *Mando* de F1 → Controles muestra el mando conectado, un probador en vivo y los nombres de
+botones de PlayStation. Usa **Asistente: mapear con el mando** para asignar cada acción pulsándola en el mando, e
+*Intercambiar sticks* para cambiar cuál mueve y cuál apunta. Si el mando aparece pero no reacciona, cierra Steam/DS4Windows
+(pueden quedarse con el control exclusivo de los mandos de PlayStation) o pon *Driver de mandos* en *Compatibilidad* y reinicia.
+
 ## Configuración
 
 El menú **F1** (Zombiewood · Gráficos · Audio · Controles · Carpetas · Ayuda) guarda al instante en `zombiewood.json`:
@@ -93,7 +98,8 @@ sobrescribe un save).
 | Sin vídeos / logo | Windows N: instala el *Media Feature Pack*; o pon `"skip_videos": true`. |
 | El instalador avisa de SHA-256 distinto | Tu APK/OBB no es la 1.5.3 original; puede funcionar mal. |
 | Tirones | Quita VSync/prueba otro backend; `fps_limit` 0 = sin límite. Mira `logs/zombiewood.log`. |
-| El mando no responde | Comprueba que Windows lo ve; añade su mapeo a `gamecontrollerdb.txt`; remapea en F1. |
+| Audio entrecortado o con chasquidos | F1 → Audio → *Latencia de audio* = *Segura* y reinicia (`"audio_latency": "safe"`). |
+| El mando no responde | Abre F1 → Controles → *Mando*: si el probador no reacciona, cierra Steam/DS4Windows o pon el driver en *Compatibilidad* y reinicia; luego usa el asistente de mapeo. |
 | Mensajes "Sending TapJoy request… / Response not valid" en el log | Normal sin red; se resumen automáticamente. |
 
 Si algo falla, adjunta `logs/zombiewood.log`. `ZW_TRACE_INPUT=1` traza la entrada.

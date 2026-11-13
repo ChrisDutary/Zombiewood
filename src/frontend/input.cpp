@@ -145,13 +145,20 @@ void Mapper::SetScreen(int w, int h) {
 }
 
 void Mapper::Key(int sc, bool down) {
-  if (sc >= 0 && sc < 512) keys_[sc] = down;
+  if (sc < 0 || sc >= 512) return;
+  keys_[sc] = down;
+  if (down) key_hit_[sc] = true;
 }
 void Mapper::PadButton(int b, bool down) {
-  if (b >= 0 && b < 32) pad_buttons_[b] = down;
+  if (b < 0 || b >= 32) return;
+  pad_buttons_[b] = down;
+  if (down) pad_hit_[b] = true;
+  any_pad_input_ = true;
 }
 void Mapper::PadAxis(int a, float v) {
-  if (a >= 0 && a < 8) pad_axes_[a] = v;
+  if (a < 0 || a >= 8) return;
+  pad_axes_[a] = v;
+  if (std::fabs(v) > 0.2f) any_pad_input_ = true;
 }
 
 void Mapper::MouseButton(int button, bool down, int x, int y) {
@@ -183,6 +190,14 @@ bool Mapper::Pressed(const Binding& b) const {
     if (p >= 0 && p < 32 && pad_buttons_[p]) return true;
   for (int a : b.pad_triggers)
     if (a >= 0 && a < 8 && pad_axes_[a] > trigger_threshold_) return true;
+  return false;
+}
+
+bool Mapper::Hit(const Binding& b) const {
+  for (int k : b.keys)
+    if (k >= 0 && k < 512 && key_hit_[k]) return true;
+  for (int p : b.pad_buttons)
+    if (p >= 0 && p < 32 && pad_hit_[p]) return true;
   return false;
 }
 
@@ -265,21 +280,27 @@ void Mapper::Update(const TouchFn& touch, const KeyFn& key) {
   UpdateStick(aim_, vx, vy, touch);
 
   for (auto& b : buttons_) {
-    const bool down = Pressed(b.bind);
+    // Un toque rapido (pulsar y soltar entre dos frames) cuenta como pulsado durante un frame.
+    const bool down = Pressed(b.bind) || (!b.active && Hit(b.bind));
     if (down == b.active) continue;
     b.active = down;
     touch(down ? 1 : 0, static_cast<int>(b.x * w_), static_cast<int>(b.y * h_), b.pointer);
   }
   for (auto& k : android_keys_) {
-    const bool down = Pressed(k.bind);
-    if (k.was_down && !down) key(k.code);
-    k.was_down = down;
+    const bool held = Pressed(k.bind);
+    // El juego actua en key-up: enviar si se solto desde el ultimo frame, o si hubo un toque completo dentro de el.
+    if ((k.was_down && !held) || (!k.was_down && !held && Hit(k.bind))) key(k.code);
+    k.was_down = held;
   }
+  std::fill(std::begin(key_hit_), std::end(key_hit_), false);
+  std::fill(std::begin(pad_hit_), std::end(pad_hit_), false);
 }
 
 void Mapper::ReleaseAll(const TouchFn& touch) {
   std::fill(std::begin(keys_), std::end(keys_), false);
   std::fill(std::begin(pad_buttons_), std::end(pad_buttons_), false);
+  std::fill(std::begin(key_hit_), std::end(key_hit_), false);
+  std::fill(std::begin(pad_hit_), std::end(pad_hit_), false);
   std::fill(std::begin(pad_axes_), std::end(pad_axes_), 0.f);
   mouse_queue_.clear();
   if (mouse_left_) touch(0, mouse_x_, mouse_y_, kMousePointer);
