@@ -7,6 +7,9 @@ target_link_libraries(zw_frontend PUBLIC zw_core zw_imgui zw_installer zw_hle_li
 target_include_directories(zw_frontend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 add_executable(zombiewood main.cpp)
+# App de ventana (sin consola): SDL2main aporta WinMain y llama a main(). Ver main.cpp (AttachConsole).
+set_target_properties(zombiewood PROPERTIES WIN32_EXECUTABLE TRUE)
+target_link_libraries(zombiewood PRIVATE dbghelp)  # informe de cierre inesperado (MiniDumpWriteDump)
 
 # Icono del exe: solo si el usuario genero resources/zombiewood.ico (tools/make_icon.ps1); no se versiona.
 set(ZW_ICON "${PROJECT_SOURCE_DIR}/resources/zombiewood.ico")

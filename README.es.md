@@ -102,7 +102,22 @@ sobrescribe un save).
 | El mando no responde | Abre F1 → Controles → *Mando*: si el probador no reacciona, cierra Steam/DS4Windows o pon el driver en *Compatibilidad* y reinicia; luego usa el asistente de mapeo. |
 | Mensajes "Sending TapJoy request… / Response not valid" en el log | Normal sin red; se resumen automáticamente. |
 
-Si algo falla, adjunta `logs/zombiewood.log`. `ZW_TRACE_INPUT=1` traza la entrada.
+Si algo falla, adjunta `logs/zombiewood.log` (y cualquier `logs/crash-*.dmp`: desde la 0.2.2 el port escribe uno si se
+cierra inesperadamente). `ZW_TRACE_INPUT=1` traza la entrada.
+
+### Mi antivirus borra o bloquea `zombiewood.exe`
+
+El exe no está firmado digitalmente y, para ejecutar el código ARM del juego, genera código máquina en tiempo real (un
+JIT). Algunas heurísticas de antivirus (Panda, Microsoft Defender…) marcan ese patrón y ponen el archivo en cuarentena:
+es un **falso positivo**.
+
+1. Verifica la descarga: `Get-FileHash .\Zombiewood-Win64-<versión>.zip` debe coincidir con el SHA-256 publicado en la release.
+2. Restaura el archivo desde la **cuarentena** del antivirus (Panda: *Antivirus → Cuarentena*; Defender: *Seguridad de
+   Windows → Protección contra virus y amenazas → Historial de protección*).
+3. Añade **la carpeta del juego** a las **exclusiones** del antivirus, para que tampoco borre las actualizaciones.
+4. Si aparece SmartScreen: *Más información → Ejecutar de todas formas*.
+
+En PCs de la universidad o del trabajo no te saltes las políticas del administrador; usa tu propia PC.
 
 ## Probarlo en tu PC y reportar resultados
 

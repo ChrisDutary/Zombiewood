@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <deque>
 #include <thread>
 #include <vector>
 
@@ -159,29 +160,35 @@ Result Play(const std::filesystem::path& file, const PlayParams& p) {
     if (SUCCEEDED(cur->GetUINT32(MF_MT_DEFAULT_STRIDE, &s))) stride = static_cast<LONG>(s);
     else stride = static_cast<LONG>(vw * 4);
   }
-  // Audio (opcional).
-  bool has_audio = SUCCEEDED(rd->SetStreamSelection(kAudio, TRUE));
+  // Audio (opcional), con un lector PROPIO (v0.2.2): asi el audio se decodifica por delante sin depender de como
+  // esten intercalados audio y video en el fichero (con un solo lector, el audio se quedaba sin datos: el logo sonaba
+  // entrecortado, 246 cortes medidos en 12 s).
+  Com<IMFSourceReader> ra;
+  bool has_audio = false;
   int a_rate = 44100, a_ch = 2;
   SDL_AudioDeviceID dev = 0;
+  if (SUCCEEDED(MFCreateSourceReaderFromURL(file.c_str(), nullptr, &ra))) {
+    ra->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE);
+    has_audio = SUCCEEDED(ra->SetStreamSelection(kAudio, TRUE));
+  }
   if (has_audio) {
     Com<IMFMediaType> mt;
     MFCreateMediaType(&mt);
     mt->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
     mt->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
     mt->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
-    if (FAILED(rd->SetCurrentMediaType(kAudio, nullptr, mt.p))) {
+    if (FAILED(ra->SetCurrentMediaType(kAudio, nullptr, mt.p))) {
       has_audio = false;
-      rd->SetStreamSelection(kAudio, FALSE);
     } else {
       Com<IMFMediaType> cur;
-      rd->GetCurrentMediaType(kAudio, &cur);
+      ra->GetCurrentMediaType(kAudio, &cur);
       a_rate = static_cast<int>(MFGetAttributeUINT32(cur.p, MF_MT_AUDIO_SAMPLES_PER_SECOND, 44100));
       a_ch = static_cast<int>(MFGetAttributeUINT32(cur.p, MF_MT_AUDIO_NUM_CHANNELS, 2));
       SDL_AudioSpec want{}, got{};
       want.freq = a_rate;
       want.format = AUDIO_S16SYS;
       want.channels = static_cast<Uint8>(a_ch);
-      want.samples = 1024;
+      want.samples = 2048;
       if (SDL_WasInit(SDL_INIT_AUDIO)) dev = SDL_OpenAudioDevice(nullptr, 0, &want, &got, 0);
       if (!dev) log::Warn("video: sin dispositivo de audio ({}), video sin sonido", SDL_GetError());
     }
@@ -192,95 +199,135 @@ Result Play(const std::filesystem::path& file, const PlayParams& p) {
 
   GlTarget gl;
   gl.Save();
-  std::vector<std::uint8_t> rgba(static_cast<std::size_t>(vw) * vh * 4);
   const float vol = std::clamp(p.volume, 0.0f, 1.0f);
   Result result = Result::Finished;
-  bool video_eos = false, audio_eos = !has_audio, started = false;
+  bool video_eos = false, audio_eos = !has_audio || !dev || !ra, clock_started = false;
   Clock::time_point start;
   long long frames = 0;
   int dw = 0, dh = 0;
-  while (!video_eos || (!audio_eos && dev)) {
+
+  // v0.2.2: lectura adelantada. Antes el audio se leia "justo a tiempo" (unos ms por delante del frame) y el
+  // dispositivo arrancaba casi vacio: con el PC ocupado arrancando el juego (JIT), el audio del logo sonaba
+  // entrecortado. Ahora se decodifica por delante (hasta ~0.5 s de audio y kMaxFrames frames) y el reloj/sonido no
+  // arranca hasta tener ~250 ms de audio en cola.
+  constexpr std::size_t kMaxFrames = 8;
+  constexpr int kAudioAheadMs = 500, kPrerollMs = 250;
+  struct Frame {
+    LONGLONG ts;
+    std::vector<std::uint8_t> rgba;
+  };
+  std::deque<Frame> queue;
+  int audio_dropouts = 0;
+  bool audio_starved = false;
+  std::vector<std::vector<std::uint8_t>> pool;  // buffers reutilizables (evita reservar 3 MB por frame)
+  const int bytes_per_ms = dev ? a_rate * a_ch * 2 / 1000 : 1;
+  auto audio_ms = [&] { return dev ? static_cast<int>(SDL_GetQueuedAudioSize(dev)) / std::max(1, bytes_per_ms) : 0; };
+
+  while (true) {
     if (p.should_skip && p.should_skip()) {
       result = Result::Skipped;
       break;
     }
-    DWORD stream = 0, flags = 0;
-    LONGLONG ts = 0;
-    Com<IMFSample> sample;
-    hr = rd->ReadSample(static_cast<DWORD>(MF_SOURCE_READER_ANY_STREAM), 0, &stream, &flags, &ts, &sample);
-    if (FAILED(hr)) {
-      log::Warn("video: ReadSample fallo (0x{:08x})", static_cast<unsigned>(hr));
-      result = frames ? Result::Finished : Result::Failed;
-      break;
-    }
-    if (!started) {
-      started = true;
-      start = Clock::now();
-      if (dev) SDL_PauseAudioDevice(dev, 0);
-    }
-    const bool is_video = [&] {
-      Com<IMFMediaType> mt;
-      GUID major{};
-      return SUCCEEDED(rd->GetCurrentMediaType(stream, &mt)) && SUCCEEDED(mt->GetMajorType(&major)) && major == MFMediaType_Video;
-    }();
-    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
-      if (is_video) video_eos = true;
-      else audio_eos = true;
-      if (is_video && audio_eos) break;
-      if (is_video && !dev) break;
-      if (is_video) rd->SetStreamSelection(kVideo, FALSE);
-      else rd->SetStreamSelection(kAudio, FALSE);
-      continue;
-    }
-    if (!sample) continue;
-    Com<IMFMediaBuffer> buf;
-    if (FAILED(sample->ConvertToContiguousBuffer(&buf))) continue;
-    BYTE* data = nullptr;
-    DWORD len = 0;
-    if (FAILED(buf->Lock(&data, nullptr, &len))) continue;
-    if (!is_video) {
-      if (dev) {
+    bool did_work = false;
+    // 1a) Audio: mantener ~0.5 s decodificado por delante (lector independiente).
+    while (!audio_eos && audio_ms() < kAudioAheadMs) {
+      DWORD flags = 0;
+      LONGLONG ts = 0;
+      Com<IMFSample> sample;
+      if (FAILED(ra->ReadSample(kAudio, 0, nullptr, &flags, &ts, &sample)) || (flags & MF_SOURCE_READERF_ENDOFSTREAM)) {
+        audio_eos = true;
+        break;
+      }
+      did_work = true;
+      if (!sample) continue;
+      Com<IMFMediaBuffer> buf;
+      BYTE* data = nullptr;
+      DWORD len = 0;
+      if (SUCCEEDED(sample->ConvertToContiguousBuffer(&buf)) && SUCCEEDED(buf->Lock(&data, nullptr, &len))) {
         if (vol < 0.999f) {
           auto* s = reinterpret_cast<std::int16_t*>(data);
           for (DWORD i = 0; i < len / 2; ++i) s[i] = static_cast<std::int16_t>(s[i] * vol);
         }
         SDL_QueueAudio(dev, data, len);
-      }
-      buf->Unlock();
-      continue;
-    }
-    // RGB32 de MF = BGRX en memoria -> RGBA.
-    const LONG abs_stride = stride < 0 ? -stride : stride;
-    for (UINT32 y = 0; y < vh; ++y) {
-      const BYTE* src = data + static_cast<std::size_t>(stride < 0 ? (vh - 1 - y) : y) * abs_stride;
-      if (static_cast<std::size_t>(src - data) + vw * 4 > len) break;
-      std::uint8_t* dst = &rgba[static_cast<std::size_t>(y) * vw * 4];
-      for (UINT32 x = 0; x < vw; ++x) {
-        dst[0] = src[2];
-        dst[1] = src[1];
-        dst[2] = src[0];
-        dst[3] = 255;
-        src += 4;
-        dst += 4;
+        buf->Unlock();
       }
     }
-    buf->Unlock();
-    // Esperar a la hora del frame (ts en unidades de 100 ns), atendiendo al salto.
-    const auto due = start + std::chrono::microseconds(ts / 10);
-    while (Clock::now() < due) {
-      if (p.should_skip && p.should_skip()) {
-        result = Result::Skipped;
-        break;
+    // 1b) Video: decodificar unos frames por delante.
+    if (!video_eos && queue.size() < kMaxFrames) {
+      DWORD flags = 0;
+      LONGLONG ts = 0;
+      Com<IMFSample> sample;
+      hr = rd->ReadSample(kVideo, 0, nullptr, &flags, &ts, &sample);
+      if (FAILED(hr)) {
+        log::Warn("video: ReadSample fallo (0x{:08x})", static_cast<unsigned>(hr));
+        if (!frames && queue.empty()) result = Result::Failed;
+        video_eos = true;
+      } else {
+        did_work = true;
+        if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+          video_eos = true;
+        } else if (sample) {
+          Com<IMFMediaBuffer> buf;
+          BYTE* data = nullptr;
+          DWORD len = 0;
+          if (SUCCEEDED(sample->ConvertToContiguousBuffer(&buf)) && SUCCEEDED(buf->Lock(&data, nullptr, &len))) {
+            {
+              Frame f{ts, {}};
+              if (!pool.empty()) {
+                f.rgba = std::move(pool.back());
+                pool.pop_back();
+              }
+              f.rgba.resize(static_cast<std::size_t>(vw) * vh * 4);
+              // RGB32 de MF = BGRX en memoria -> RGBA.
+              const LONG abs_stride = stride < 0 ? -stride : stride;
+              for (UINT32 y = 0; y < vh; ++y) {
+                const BYTE* src = data + static_cast<std::size_t>(stride < 0 ? (vh - 1 - y) : y) * abs_stride;
+                if (static_cast<std::size_t>(src - data) + vw * 4 > len) break;
+                std::uint8_t* dst = &f.rgba[static_cast<std::size_t>(y) * vw * 4];
+                for (UINT32 x = 0; x < vw; ++x) {
+                  dst[0] = src[2];
+                  dst[1] = src[1];
+                  dst[2] = src[0];
+                  dst[3] = 255;
+                  src += 4;
+                  dst += 4;
+                }
+              }
+              queue.push_back(std::move(f));
+            }
+            buf->Unlock();
+          }
+        }
       }
-      std::this_thread::sleep_for(std::min<Clock::duration>(due - Clock::now(), std::chrono::milliseconds(4)));
     }
-    if (result == Result::Skipped) break;
-    SDL_GL_GetDrawableSize(p.window, &dw, &dh);
-    gl.Upload(rgba.data(), static_cast<int>(vw), static_cast<int>(vh));
-    gl.Draw(dw, dh, p.linear_filter);
-    if (p.overlay) p.overlay(dw, dh);
-    SDL_GL_SwapWindow(p.window);
-    ++frames;
+    // 2) Arrancar reloj y sonido cuando haya colchon de audio y al menos un frame (o no pueda haber mas).
+    if (!clock_started && (!queue.empty() || video_eos) && (audio_eos || audio_ms() >= kPrerollMs)) {
+      clock_started = true;
+      start = Clock::now() - std::chrono::microseconds(queue.empty() ? 0 : queue.front().ts / 10);
+      if (dev) SDL_PauseAudioDevice(dev, 0);
+    }
+    // 3) Presentar el frame que toque.
+    if (clock_started && !queue.empty() && Clock::now() >= start + std::chrono::microseconds(queue.front().ts / 10)) {
+      Frame& f = queue.front();
+      SDL_GL_GetDrawableSize(p.window, &dw, &dh);
+      gl.Upload(f.rgba.data(), static_cast<int>(vw), static_cast<int>(vh));
+      gl.Draw(dw, dh, p.linear_filter);
+      if (p.overlay) p.overlay(dw, dh);
+      SDL_GL_SwapWindow(p.window);
+      ++frames;
+      pool.push_back(std::move(f.rgba));
+      queue.pop_front();
+      did_work = true;
+    }
+    // Diagnostico: el dispositivo se quedo sin audio antes de terminar el stream (= corte audible).
+    if (clock_started && dev && !audio_eos) {
+      const bool empty = SDL_GetQueuedAudioSize(dev) == 0;
+      if (empty && !audio_starved) ++audio_dropouts;
+      audio_starved = empty;
+    }
+    // 4) Fin: todo leido y todos los frames mostrados (el audio pendiente se drena abajo).
+    if (video_eos && audio_eos && queue.empty()) break;
+    if (!did_work) std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
   // Dejar que termine el audio encolado (si no se salto).
   if (dev) {
@@ -295,8 +342,9 @@ Result Play(const std::filesystem::path& file, const PlayParams& p) {
   }
   gl.Restore();
   const double secs = std::chrono::duration<double>(Clock::now() - t0).count();
-  log::Info("video: {} {} ({} frames en {:.1f} s)", file.filename().string(),
-            result == Result::Finished ? "terminado" : result == Result::Skipped ? "saltado" : "fallo", frames, secs);
+  log::Info("video: {} {} ({} frames en {:.1f} s, {} cortes de audio)", file.filename().string(),
+            result == Result::Finished ? "terminado" : result == Result::Skipped ? "saltado" : "fallo", frames, secs,
+            audio_dropouts);
   return result;
 }
 

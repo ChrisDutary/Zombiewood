@@ -109,7 +109,21 @@ overwrites a save).
 | The gamepad does not respond | Open F1 → Controles → *Mando*: if the tester does not react, close Steam/DS4Windows or set the driver to *Compatibilidad* and restart; then use the mapping wizard. |
 | "Sending TapJoy request… / Response not valid" messages in the log | Normal without a network; they are summarized automatically. |
 
-If something fails, attach `logs/zombiewood.log`. `ZW_TRACE_INPUT=1` traces input.
+If something fails, attach `logs/zombiewood.log` (and any `logs/crash-*.dmp` file: since 0.2.2 the port writes one
+when it closes unexpectedly). `ZW_TRACE_INPUT=1` traces input.
+
+### My antivirus deletes or blocks `zombiewood.exe`
+
+The exe is not digitally signed and, to run the game's ARM code, it generates machine code at runtime (a JIT). Some
+antivirus heuristics (Panda, Microsoft Defender, …) flag that pattern and quarantine the file: a **false positive**.
+
+1. Verify the download: `Get-FileHash .\Zombiewood-Win64-<version>.zip` must match the SHA-256 published with the release.
+2. Restore the file from the antivirus' **quarantine** (Panda: *Antivirus → Quarantine*; Defender: *Windows Security →
+   Virus & threat protection → Protection history*).
+3. Add **your game folder** to the antivirus **exclusions**, so future updates are not removed either.
+4. If Windows SmartScreen appears: *More info → Run anyway*.
+
+On school/work computers, do not bypass the administrator's policies; use your own PC.
 
 ## Testing it on your PC and reporting results
 
