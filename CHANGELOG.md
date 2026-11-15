@@ -12,6 +12,40 @@ Each version is published as a release on [GitHub](https://github.com/ChrisDutar
 
 Nothing yet.
 
+## [0.2.2] — 2026-11-15
+
+Input, audio and quality-of-life fixes. Tested by the owner with a DualSense over USB (test builds 1 and 2).
+Saves and settings from 0.2.x keep working.
+
+### Fixed
+- **Quick key/button taps were lost (bug B2)**: pressing and releasing within the same frame (~16 ms) never reached the
+  game, so the first `Esc` often did nothing and fast gamepad taps were ignored. Presses are now latched until the next
+  frame. Automated A/B test with instant taps: 0.2.1 delivered 0 of 3, 0.2.2 delivers 3 of 3.
+- **Choppy audio at startup**: the audio queue was tight (~100 ms) and refilled immediately after every dropout, which
+  sounded "laggy" while the PC was busy translating the game's code. Now the queue is larger (150 ms by default), the
+  output buffer is 2048 frames, and after a dropout playback waits until the queue is half full again (a brief silence
+  instead of crackling). Measured at startup: 2 dropouts (low), 1 (normal), 0 (safe).
+- **Glitchy audio in the startup logo video** (the main source of the "laggy" sound at launch): the video player read
+  audio just in time from the same reader as the frames and started the device almost empty, so the sound starved
+  while the game was booting. Audio now has its own reader, stays ~0.5 s ahead and playback starts with ~250 ms
+  buffered. Measured on `logo_hd.mp4`: **246 audio dropouts → 0**.
+- **Black console window flashing at launch**: the exe is now a windowed app (no console is ever created); when started
+  from a terminal it attaches to that console so CLI output still shows.
+
+### Added
+- **Gamepad section in F1 → Controles**: connected controllers, a live tester (sticks, triggers and pressed buttons as
+  the game receives them), PlayStation button names (Cross, Circle, L1, R2…), a "swap sticks" option, and a **guided
+  mapping wizard** that asks you to press the gamepad button for each action in turn.
+- **Gamepad driver option** (`"pad_driver": "auto" | "compat"`): "compat" disables SDL's HIDAPI driver, for when
+  another app (Steam, DS4Windows) holds the controller and no buttons arrive.
+- Fallback for joysticks SDL does not recognize as a standard gamepad (opened in raw mode so they can be remapped).
+- **Audio latency option** in F1 → Audio (`"audio_latency": "low" | "normal" | "safe"`) and a live dropout counter.
+- More diagnostics in the log: controller type/axes/buttons/driver, the first input received from the gamepad, and
+  audio dropouts every ~5 s (game) and per video.
+- **Crash report**: if the game closes unexpectedly, it writes `logs/crash-<date>.dmp` and a log line with the
+  exception code and the faulting module (helps diagnose crashes on other PCs).
+- README: section for antivirus false positives (Panda, Defender…) deleting or blocking the exe.
+
 ## [0.2.1] — 2026-11-13
 
 Documentation and licensing release; the game runtime is unchanged (0.2.0 saves and settings keep working).

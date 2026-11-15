@@ -3,8 +3,10 @@
 #pragma once
 #include <functional>
 #include <string>
+#include <vector>
 
 #include <SDL.h>
+#include <nlohmann/json.hpp>
 
 struct ImGuiContext;
 
@@ -74,6 +76,11 @@ class Menu {
   // Remapeo: ruta json del destino ("move_stick/keys/up", "buttons/2", "android_keys/0") y modo.
   std::string capture_;
   bool capture_add_ = false;
+  // Asistente de mapeo con el mando (v0.2.2): lista de destinos a capturar en orden; solo acepta botones de mando.
+  std::vector<std::string> wizard_;
+  std::size_t wizard_pos_ = 0;
+  void WizardAdvance();
+  void DrawGamepad(nlohmann::json& cfg, bool& changed);
   std::string status_;
   double status_until_ = 0;
 };

@@ -50,6 +50,10 @@ Settings Settings::Load(const GameOptions* opt) {
   s.volume = std::clamp(ConfigGet(cfg, "volume", 1.0f), 0.0f, 1.0f);
   s.video_volume = std::clamp(ConfigGet(cfg, "video_volume", 1.0f), 0.0f, 1.0f);
   s.mute = ConfigGet(cfg, "mute", false);
+  s.pad_driver = ConfigGet<std::string>(cfg, "pad_driver", "auto");
+  if (s.pad_driver != "auto" && s.pad_driver != "compat") s.pad_driver = "auto";
+  s.audio_latency = ConfigGet<std::string>(cfg, "audio_latency", "normal");
+  if (s.audio_latency != "low" && s.audio_latency != "normal" && s.audio_latency != "safe") s.audio_latency = "normal";
   s.skip_videos = ConfigGet(cfg, "skip_videos", false);
   s.play_logo = ConfigGet(cfg, "play_logo", true);
   s.language = ConfigGet(cfg, "language", 0);
@@ -95,6 +99,8 @@ void Settings::MergeInto(nlohmann::json& cfg) const {
   cfg["volume"] = volume;
   cfg["video_volume"] = video_volume;
   cfg["mute"] = mute;
+  cfg["audio_latency"] = audio_latency;
+  cfg["pad_driver"] = pad_driver;
   cfg["skip_videos"] = skip_videos;
   cfg["play_logo"] = play_logo;
   cfg["language"] = language;

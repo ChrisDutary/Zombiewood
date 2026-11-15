@@ -2,6 +2,7 @@
 // C++ puro, sin JNI: T7 lo envuelve como la clase Java emulada. Ver CONTRACTS.md "Audio (T6)".
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
@@ -35,6 +36,13 @@ void set_muted(bool m);
 bool muted();
 void set_global_paused(bool p);  // pausa/reanuda TODAS las pistas (no cambia su play_state)
 bool global_paused();
+// Latencia de la cola (v0.2.2): ms de audio que se acumulan antes de que write() bloquee. Mas latencia = menos cortes
+// cuando el PC va cargado (p. ej. al arrancar, mientras el JIT traduce codigo). Afecta a las pistas creadas despues.
+// Valores tipicos: 80 (baja), 150 (normal, por defecto), 250 (segura).
+void set_latency_ms(int ms);
+int latency_ms();
+// Diagnostico: veces que el dispositivo pidio audio y la cola estaba vacia (se rellena con silencio).
+uint64_t underrun_count();
 // Solo tests/diagnostico: fuerza el driver SDL ("dummy", "disk"...) antes de abrir la primera pista.
 void set_driver(const char* name);
 // Solo tests: copia (tras volumen/mute) de lo que se entrega al dispositivo (formato de la pista).
@@ -78,8 +86,11 @@ class Track {
   std::condition_variable cv_;
   std::vector<uint8_t> ring_;
   size_t rhead_ = 0;
-  size_t max_queue_;  // ~100 ms
+  size_t max_queue_;  // latencia configurada (150 ms por defecto)
   size_t hard_cap_;
+  size_t prime_bytes_;   // tras quedarse sin datos, no reanudar hasta tener esto en cola (evita el "chisporroteo")
+  bool primed_ = false;  // protegido por mu_
+  std::chrono::steady_clock::time_point last_write_{};  // protegido por mu_
   std::thread fallback_;  // sin dispositivo SDL: consume a tiempo real
   std::atomic<bool> fb_stop_{false};
 };

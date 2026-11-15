@@ -18,6 +18,7 @@
 #include <deque>
 #include <fstream>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -462,6 +463,7 @@ class GlThread {
     mapper_.SetScreen(iw_, ih_);
     audio::set_master_volume(s_.volume);
     audio::set_muted(s_.mute);
+    audio::set_latency_ms(s_.AudioLatencyMs());  // antes de que el juego cree su AudioTrack
     InitMenu();
     jni::hooks().play_cinematic = [this](const std::string& n) { PlayCinematic(n); };
     // Splash de Java (logo de Gameloft) antes de que el juego dibuje nada.
@@ -721,6 +723,13 @@ class GlThread {
       jni::call_native("GL2JNILib_step");
       const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
       ++frame_;
+      if (frame_ % 300 == 0) {  // ~5 s: registrar cortes de audio nuevos (diagnostico del audio "lageado")
+        const uint64_t u = audio::underrun_count();
+        if (u != last_underruns_) {
+          log::Info("audio: {} cortes acumulados (+{} en los ultimos ~5 s)", u, u - last_underruns_);
+          last_underruns_ = u;
+        }
+      }
       if (opt_.shot_every > 0 && frame_ % opt_.shot_every == 0) shot_names_.push_back(std::format("auto_{:06}", frame_));
       for (auto& n : shot_names_) Screenshot(n);
       shot_names_.clear();
@@ -796,6 +805,7 @@ class GlThread {
   int rx_ = 0, ry_ = 0, rw_ = 1280, rh_ = 720;  // rectangulo de la imagen en la ventana
   bool paused_ = false, want_pause_ = false, quit_ = false, pending_resize_ = false, trace_input_ = false;
   long long frame_ = 0;
+  uint64_t last_underruns_ = 0;
   Clock::time_point next_frame_;
   std::deque<std::string> cmds_;
   Clock::time_point wait_until_{};
@@ -849,6 +859,15 @@ void ReportUnimplemented() {
 int RunGame(const GameOptions& opt) {
   Settings s = Settings::Load(&opt);
   log::Info("Zombiewood - home: {}", paths::Home().string());
+
+  // Mandos (v0.2.2). "auto": driver HIDAPI de SDL (DualSense/DualShock/Switch Pro nativos). "compat": sin HIDAPI
+  // (RawInput/XInput/DirectInput); util si otra app (Steam, DS4Windows) tiene el mando "secuestrado" y no llegan
+  // botones. Debe fijarse antes de SDL_Init.
+  SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, s.pad_driver == "compat" ? "0" : "1");
+  SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5, s.pad_driver == "compat" ? "0" : "1");
+  SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4, s.pad_driver == "compat" ? "0" : "1");
+  SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "0");
+  log::Info("mandos: driver '{}'", s.pad_driver);
 
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
     log::Error("SDL_Init fallo: {}", SDL_GetError());
@@ -1024,6 +1043,8 @@ int RunGame(const GameOptions& opt) {
   };
   auto last_title = Clock::now();
   bool quit_sent = false;
+  std::set<SDL_JoystickID> raw_joys;  // joysticks sin mapeo de mando abiertos en crudo
+  bool pad_seen = false;              // para registrar la primera entrada de mando recibida
   while (!g_sh.done) {
     SDL_Event ev;
     if (!SDL_WaitEventTimeout(&ev, 100)) ev.type = 0;
@@ -1098,17 +1119,66 @@ int RunGame(const GameOptions& opt) {
           break;
         }
         case SDL_CONTROLLERDEVICEADDED:
-          if (SDL_GameController* c = SDL_GameControllerOpen(ev.cdevice.which))
-            log::Info("mando conectado: {}", SDL_GameControllerName(c) ? SDL_GameControllerName(c) : "?");
+          if (SDL_GameController* c = SDL_GameControllerOpen(ev.cdevice.which)) {
+            SDL_Joystick* j = SDL_GameControllerGetJoystick(c);
+            char guid[64] = {};
+            SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(j), guid, sizeof guid);
+            const char* types[] = {"desconocido", "Xbox 360", "Xbox One", "PS3", "PS4", "Nintendo Switch Pro", "virtual", "PS5"};
+            const int t = static_cast<int>(SDL_GameControllerGetType(c));
+            log::Info("mando conectado: {} (tipo {}, {} ejes, {} botones, GUID {}, driver {})",
+                      SDL_GameControllerName(c) ? SDL_GameControllerName(c) : "?", t >= 0 && t < 8 ? types[t] : "otro",
+                      SDL_JoystickNumAxes(j), SDL_JoystickNumButtons(j), guid,
+                      SDL_GetHintBoolean(SDL_HINT_JOYSTICK_HIDAPI, SDL_TRUE) ? "HIDAPI" : "compat");
+          } else {
+            log::Warn("mando: SDL_GameControllerOpen fallo: {}", SDL_GetError());
+          }
           break;
         case SDL_CONTROLLERDEVICEREMOVED:
           if (SDL_GameController* c = SDL_GameControllerFromInstanceID(ev.cdevice.which)) SDL_GameControllerClose(c);
+          log::Info("mando desconectado");
+          break;
+        case SDL_JOYDEVICEADDED:
+          // Joystick que SDL no reconoce como mando estandar: se abre en crudo y se traduce por indices
+          // (ejes 0-3 = sticks, botones 0..N = botones del mando) para que al menos se pueda remapear.
+          if (!SDL_IsGameController(ev.jdevice.which)) {
+            if (SDL_Joystick* j = SDL_JoystickOpen(ev.jdevice.which)) {
+              raw_joys.insert(SDL_JoystickInstanceID(j));
+              log::Warn("joystick sin mapeo de mando: {} ({} ejes, {} botones). Se usa en modo crudo; remapea en F1 > Controles.",
+                        SDL_JoystickName(j) ? SDL_JoystickName(j) : "?", SDL_JoystickNumAxes(j), SDL_JoystickNumButtons(j));
+            }
+          }
+          break;
+        case SDL_JOYDEVICEREMOVED:
+          if (raw_joys.erase(ev.jdevice.which))
+            if (SDL_Joystick* j = SDL_JoystickFromInstanceID(ev.jdevice.which)) SDL_JoystickClose(j);
+          break;
+        case SDL_JOYBUTTONDOWN:
+        case SDL_JOYBUTTONUP:
+          if (raw_joys.count(ev.jbutton.which) && ev.jbutton.button < SDL_CONTROLLER_BUTTON_MAX)
+            g_sh.Push({Ev::PadButton, ev.jbutton.button, ev.type == SDL_JOYBUTTONDOWN});
+          break;
+        case SDL_JOYAXISMOTION:
+          if (raw_joys.count(ev.jaxis.which) && ev.jaxis.axis < SDL_CONTROLLER_AXIS_MAX) {
+            Ev e{Ev::PadAxis, ev.jaxis.axis};
+            e.f = std::clamp(ev.jaxis.value / 32767.0f, -1.0f, 1.0f);
+            g_sh.Push(e);
+          }
           break;
         case SDL_CONTROLLERBUTTONDOWN:
         case SDL_CONTROLLERBUTTONUP:
+          if (!pad_seen) {
+            pad_seen = true;
+            log::Info("mando: primera entrada recibida (boton {})",
+                      SDL_GameControllerGetStringForButton(static_cast<SDL_GameControllerButton>(ev.cbutton.button)));
+          }
           push_raw({Ev::PadButton, ev.cbutton.button, ev.type == SDL_CONTROLLERBUTTONDOWN}, ev);
           break;
         case SDL_CONTROLLERAXISMOTION: {
+          if (!pad_seen && std::abs(ev.caxis.value) > 12000) {
+            pad_seen = true;
+            log::Info("mando: primera entrada recibida (eje {})",
+                      SDL_GameControllerGetStringForAxis(static_cast<SDL_GameControllerAxis>(ev.caxis.axis)));
+          }
           Ev e{Ev::PadAxis, ev.caxis.axis};
           e.f = std::clamp(ev.caxis.value / 32767.0f, -1.0f, 1.0f);
           g_sh.Push(e);

@@ -95,6 +95,8 @@ All keys are optional (the comments exist only on this page):
   "cursor": "zombie", "cursor_size": 48,            // (0.2.0) embedded zombie cursor | "system"; 32/48/64/96 px
   "pause_on_focus_loss": false,                     // minimizing always pauses (pause + nativeVoxSuspend)
   "volume": 1.0, "video_volume": 1.0, "mute": false,
+  "audio_latency": "normal",                        // (0.2.2) "low" 80 ms | "normal" 150 ms | "safe" 250 ms; on restart
+  "pad_driver": "auto",                             // (0.2.2) "auto" (SDL HIDAPI) | "compat" (no HIDAPI); on restart
   "skip_videos": false, "play_logo": true,          // res/raw videos (logo at startup, intro, moviecomplete)
   "language": 0,                                    // 0 en,1 fr,2 de,3 es,4 it,5 pt,6 ja,7 ko,8 zh,9 ru (on restart)
   "backups_keep": 20,                               // number of save backup sets

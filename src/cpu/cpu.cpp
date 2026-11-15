@@ -278,7 +278,15 @@ struct TlsHolder {
 };
 thread_local TlsHolder t_holder;
 
+LPTOP_LEVEL_EXCEPTION_FILTER g_prev_crash_filter = nullptr;  // v0.2.2: el del frontend (minidump), se encadena
+
 LONG WINAPI HostCrashFilter(EXCEPTION_POINTERS* ep) {
+  struct Chain {  // al salir, ceder al filtro anterior (informe .dmp del frontend)
+    EXCEPTION_POINTERS* ep;
+    ~Chain() {
+      if (g_prev_crash_filter) g_prev_crash_filter(ep);
+    }
+  } chain{ep};
   static std::atomic<bool> busy{false};
   if (ep && ep->ExceptionRecord && ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && !busy.exchange(true)) {
     const auto addr = static_cast<std::uintptr_t>(ep->ExceptionRecord->ExceptionInformation[1]);
@@ -360,7 +368,7 @@ Cpu* detail::CpuImpl::Create(gsize stack_size, std::string name) {
   std::call_once(once, [] {
     internal::HleEnsureInit();
     MapKuserHelpers();
-    SetUnhandledExceptionFilter(HostCrashFilter);
+    g_prev_crash_filter = SetUnhandledExceptionFilter(HostCrashFilter);
     if (EnvFlag("ZW_DEBUG_VEH", false)) AddVectoredExceptionHandler(1, DebugVeh);
     if (g_trace.load() < 0) {
       if (const char* f = std::getenv("ZW_TRACE_FILTER")) g_trace_filter = f;
