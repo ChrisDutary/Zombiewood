@@ -258,7 +258,7 @@ pwsh tools\package.ps1 -SkipBuild    # only repackages what is already in the bu
 Output (by default in `C:\Users\chdut\ZombiewoodDev\dist\`): a `Zombiewood-Win64\` folder with `zombiewood.exe`,
 `SDL2.dll`, `libEGL.dll`, `libGLESv2.dll`, `z.dll`, the Visual C++ runtime (`msvcp140.dll`, `vcruntime140.dll`,
 `vcruntime140_1.dll`), `gamecontrollerdb.txt` (Windows entries only, `tools/package/`), `readme.txt`
-(`tools/package/readme.txt`), `README.md`, `LICENSE.txt` and `licenses/`; plus `Zombiewood-Win64-<version>.zip`
+(`tools/package/readme.txt`), `README.md`, `LICENSE.txt` and `licenses/`; plus `Zombiewood-Windows-x64-<version>.zip`
 (+ `.sha256`). The script fails if the package contains `*.apk/.obb/.so/.mp4/.bar/.dex`, and it refuses to wipe the
 staging folder if it contains `data/`, `saves/` or `zombiewood.json`. Parameters: `-DistDir`, `-BuildDir`, `-Clean`,
 `-SkipBuild`, `-SkipTests`. `-Clean` does a true from-scratch build (vcpkg + FetchContent clones: ~15-20 min, needs a

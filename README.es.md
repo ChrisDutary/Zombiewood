@@ -24,7 +24,7 @@ Cada archivo tiene su `.sha256` al lado.
 
 | Sistema | Archivo | Notas |
 |---|---|---|
-| **Windows** 10/11 x64 | `Zombiewood-Win64-<versión>.zip` | descomprime y ejecuta `zombiewood.exe`; ver [Instalación](#instalación) |
+| **Windows** 10/11 x64 | `Zombiewood-Windows-x64-<versión>.zip` | descomprime y ejecuta `zombiewood.exe`; ver [Instalación](#instalación) |
 | **Linux** x86_64 (glibc 2.38+) | `Zombiewood-Linux-x86_64-<versión>.AppImage` | un solo archivo: `chmod +x` y ejecutar; datos en `~/.local/share/zombiewood`; ver [Instalación en Linux](#instalación-en-linux) |
 | **Linux** x86_64 (glibc 2.38+) | `Zombiewood-Linux-x86_64-<versión>.tar.gz` | carpeta portable: los datos quedan junto al binario `zombiewood` |
 
@@ -46,12 +46,12 @@ Windows (para Linux ver [`docs/LINUX.md`](docs/LINUX.md)):
 
 ## Instalación
 
-1. Descarga `Zombiewood-Win64-<versión>.zip` desde la sección **Releases** del repositorio
+1. Descarga `Zombiewood-Windows-x64-<versión>.zip` desde la sección **Releases** del repositorio
    ([última versión](https://github.com/ChrisDutary/Zombiewood/releases/latest)) y descomprímelo
    en una carpeta con permiso de escritura (p. ej. `C:\Juegos\Zombiewood`, **no** en `Archivos de programa` ni dentro del
    zip). Contiene `zombiewood.exe`, `SDL2.dll`, `libEGL.dll`, `libGLESv2.dll`, `z.dll`, el runtime de Visual C++
    (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`), `gamecontrollerdb.txt`, `readme.txt`, `LICENSE.txt` y `licenses/`.
-   Opcional: comprueba el SHA-256 publicado junto al zip (`Get-FileHash .\Zombiewood-Win64-<versión>.zip`).
+   Opcional: comprueba el SHA-256 publicado junto al zip (`Get-FileHash .\Zombiewood-Windows-x64-<versión>.zip`).
 2. Ejecuta `zombiewood.exe`. El exe no está firmado: si Windows SmartScreen muestra *"Windows protegió tu PC"*, pulsa
    **Más información → Ejecutar de todas formas**. Como aún no hay datos, aparece el asistente de primer arranque dentro de la ventana.
 3. **Elegir APK… (Enter)** → selecciona tu APK. Se extrae en streaming a `data/` (unos segundos en un SSD), se verifican los
@@ -149,7 +149,7 @@ El exe no está firmado digitalmente y, para ejecutar el código ARM del juego, 
 JIT). Algunas heurísticas de antivirus (Panda, Microsoft Defender…) marcan ese patrón y ponen el archivo en cuarentena:
 es un **falso positivo**.
 
-1. Verifica la descarga: `Get-FileHash .\Zombiewood-Win64-<versión>.zip` debe coincidir con el SHA-256 publicado en la release.
+1. Verifica la descarga: `Get-FileHash .\Zombiewood-Windows-x64-<versión>.zip` debe coincidir con el SHA-256 publicado en la release.
 2. Restaura el archivo desde la **cuarentena** del antivirus (Panda: *Antivirus → Cuarentena*; Defender: *Seguridad de
    Windows → Protección contra virus y amenazas → Historial de protección*).
 3. Añade **la carpeta del juego** a las **exclusiones** del antivirus, para que tampoco borre las actualizaciones.
@@ -175,7 +175,7 @@ Ver [`docs/BUILD.md`](docs/BUILD.md) (Windows: VS 2022 Build Tools + vcpkg + pre
 paquetes de la distribución + preset `linux-release`). Para generar los paquetes:
 
 ```powershell
-pwsh tools\package.ps1 -Clean      # configura, compila, prueba y crea dist\Zombiewood-Win64-<versión>.zip
+pwsh tools\package.ps1 -Clean      # configura, compila, prueba y crea dist\Zombiewood-Windows-x64-<versión>.zip
 ```
 
 ```sh

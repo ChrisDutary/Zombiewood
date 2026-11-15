@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Genera el release Win64 de Zombiewood desde cero: configura + compila con el preset win-release,
-  pasa ctest, copia el exe y las DLL a Zombiewood-Win64/ y crea Zombiewood-Win64-<version>.zip.
+  pasa ctest, copia el exe y las DLL a Zombiewood-Win64/ y crea Zombiewood-Windows-x64-<version>.zip (la carpeta de staging sigue siendo Zombiewood-Win64).
 
 .PARAMETER DistDir
   Carpeta de salida (por defecto C:\Users\chdut\ZombiewoodDev\dist).
@@ -39,7 +39,7 @@ if ((Get-Content (Join-Path $root 'CMakeLists.txt') -Raw) -match 'project\(zombi
 $stamp = Get-Date -Format 'yyyyMMdd'
 $name  = 'Zombiewood-Win64'
 $stage = Join-Path $DistDir $name
-$zip   = Join-Path $DistDir "$name-$version.zip"
+$zip   = Join-Path $DistDir "Zombiewood-Windows-x64-$version.zip"   # nombre del asset (0.3.0+); la carpeta sigue siendo $name
 
 function Invoke-Native([string]$what, [scriptblock]$cmd) {
   & $cmd

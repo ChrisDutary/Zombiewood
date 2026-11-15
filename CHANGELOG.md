@@ -3,7 +3,8 @@
 Every improvement and change to the port is documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 Each version is published as a release on [GitHub](https://github.com/ChrisDutary/Zombiewood/releases) with the tag
-`vX.Y.Z` and its zip `Zombiewood-Win64-X.Y.Z.zip`.
+`vX.Y.Z` and its packages: `Zombiewood-Windows-x64-X.Y.Z.zip` (`Zombiewood-Win64-X.Y.Z.zip` up to 0.2.2) and, from the
+first Linux release, `Zombiewood-Linux-x86_64-X.Y.Z.AppImage` / `.tar.gz`.
 
 **Updating without losing your progress:** close the game and copy the contents of the new zip over your folder
 (replace files). The zip only contains the program; `saves/`, `data/` and `zombiewood.json` are never touched.
@@ -24,6 +25,8 @@ Each version is published as a release on [GitHub](https://github.com/ChrisDutar
   `tools/package-linux.sh`.
 
 ### Changed
+- **The Windows download is now named `Zombiewood-Windows-x64-<version>.zip`** (it was `Zombiewood-Win64-<version>.zip`), to
+  sit next to the Linux packages. The folder inside the zip is still `Zombiewood-Win64`, so updating works as before.
 - The installer verifies SHA-256 with a built-in implementation instead of Windows BCrypt (same results).
 - Platform-specific code was isolated (`src/core/platform.*`, `src/frontend/platform_win.cpp` /
   `platform_linux.cpp`); the Windows behavior is unchanged.
