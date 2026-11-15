@@ -116,6 +116,11 @@ bool Settings::Save() const {
 }
 
 void Settings::ApplyBackendEnv() const {
+#ifndef _WIN32
+  // Linux: no hay ANGLE; SDL usa el EGL/GLES del sistema (Mesa o el driver propietario) y "backend" se ignora.
+  log::Info("backend: EGL/GLES del sistema (la opcion \"backend\" solo aplica en Windows)");
+  return;
+#endif
   // ANGLE lee ANGLE_DEFAULT_PLATFORM al crear el EGLDisplay por defecto (Display.cpp): d3d11, d3d9, gl, vulkan...
   // No sobreescribir si el usuario ya la puso en el entorno.
   if (const char* v = std::getenv("ANGLE_DEFAULT_PLATFORM"); v && *v) {

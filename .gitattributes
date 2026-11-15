@@ -1,0 +1,5 @@
+# Shell scripts and Linux packaging inputs must keep LF endings even on Windows checkouts
+# (they are run from WSL / Linux straight from the working tree).
+*.sh text eol=lf
+tools/package/readme-linux.txt text eol=lf
+tools/package/gamecontrollerdb-linux.txt text eol=lf

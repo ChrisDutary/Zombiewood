@@ -45,6 +45,14 @@ set_target_properties(zombiewood PROPERTIES WIN32_EXECUTABLE TRUE)
 if(NOT WIN32)
   # Exportar los simbolos del ejecutable: backtrace_symbols() del informe de cierre los necesita.
   target_link_options(zombiewood PRIVATE -rdynamic)
+  # Paquete .tar.gz: las bibliotecas empaquetadas (SDL2...) van en lib/ junto al binario. En el AppImage
+  # linuxdeploy reescribe el RUNPATH a $ORIGIN/../lib.
+  set_target_properties(zombiewood PROPERTIES BUILD_RPATH "\$ORIGIN/lib")
+  # Release empaquetado (tools/package-linux.sh): libstdc++/libgcc estaticos, para depender solo de glibc.
+  option(ZW_STATIC_CXX_RUNTIME "Enlazar libstdc++ y libgcc estaticamente (paquetes de release)" OFF)
+  if(ZW_STATIC_CXX_RUNTIME)
+    target_link_options(zombiewood PRIVATE -static-libstdc++ -static-libgcc)
+  endif()
 endif()
 
 # Icono del exe: solo si el usuario genero resources/zombiewood.ico (tools/make_icon.ps1); no se versiona.

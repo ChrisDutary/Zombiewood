@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "core/log.h"
-
 #include "frontend/platform.h"
 
 namespace zw::cursor {
@@ -63,13 +62,13 @@ void Apply(const std::string& mode, int size) {
       SDL_FreeCursor(g_cursor);
       g_cursor = nullptr;
       g_cursor_size = 0;
-      log::Info("cursor: cursor de Windows");
+      log::Info("cursor: cursor del sistema");
     }
     return;
   }
   const auto entries = LoadEntries();
   if (entries.empty()) {
-    log::Info("cursor: el exe no trae cursor zombi incrustado; se usa el de Windows");
+    log::Info("cursor: el ejecutable no trae cursor zombi incrustado; se usa el del sistema");
     return;
   }
   const Entry* best = &entries[0];
