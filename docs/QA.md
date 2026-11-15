@@ -82,7 +82,7 @@ Everything below was run for real; what was not exercised is marked **NOT TESTED
 | # | Test | Result | Evidence / notes |
 |---|---|---|---|
 | L1 | Configure + build, `linux-release` preset (distro packages, no ANGLE) | ✅ OK | 0 errors; dynarmic at the pinned commit, shadow-space patch skipped (`dynarmic: sin parche de shadow space (solo Windows)`) |
-| L2 | `ctest` on Linux | ✅ 8/8 | `loader`, `cpu` (fastmem via SIGSEGV), `hle_libc` (164 checks, incl. the new case-insensitive VFS ones), `hle_gles` (EGL pbuffer), `hle_audio`, `jni`, `installer`, `core_and_cpu_deps` |
+| L2 | `ctest` on Linux (`linux-release`, and `linux-debug`) | ✅ 8/8 | `loader`, `cpu` (fastmem via SIGSEGV), `hle_libc` (164 checks, incl. the new case-insensitive VFS ones), `hle_gles` (EGL pbuffer), `hle_audio`, `jni`, `installer`, `core_and_cpu_deps` |
 | L3 | Windows still builds and passes `ctest` after the port | ✅ 8/8 | separate build dir `win-release-linuxcheck` (deleted afterwards) |
 | L4 | Installer from the APK: `--install=<apk> --install-only` | ✅ OK | 13 files in **3.5–4.3 s**; SHA-256 of `libZombieWood.so` = `2855ed9f…fa967c` (1.5.3) and both OBBs verified with the portable SHA-256, 0 warnings; `data/` = 311 MB |
 | L5 | First run without a save, `--frames=1800 --shot-every=300` | ✅ OK | reaches the tutorial ("SHOOT THOSE PROPS!"); image correct (`auto_001800.png`); exit code 0. `.init_array` 195–300 ms |
@@ -100,8 +100,12 @@ Everything below was run for real; what was not exercised is marked **NOT TESTED
 | L17 | tar.gz | ✅ OK | extracted to an empty folder: starts, `<home>` = the extracted folder, `libSDL2` resolved from `lib/` (RUNPATH `$ORIGIN/lib`) |
 
 Not tested on Linux: a native (non-WSL) desktop, Mesa Intel/AMD and the proprietary NVIDIA driver, Wayland on a real
-compositor, Steam Deck, physical gamepads, audio by ear, the `linux-debug` preset beyond configuration, distributions
-other than Ubuntu 24.04, and long play sessions (the longest run was 1800 frames).
+compositor, Steam Deck, physical gamepads, audio by ear, distributions other than Ubuntu 24.04, and long play sessions (the longest run was 1800 frames).
+
+Packages from `tools/package-linux.sh --clean` (from-scratch configure + build + ctest + packaging: 3 min 7 s):
+`Zombiewood-Linux-x86_64-0.2.2.AppImage` — 10,484,216 bytes — and `Zombiewood-Linux-x86_64-0.2.2.tar.gz` —
+9,801,042 bytes — each with its `.sha256` (the hashes change with every build). Highest glibc symbol version required
+by the binary and the bundled libraries: `GLIBC_2.38`.
 
 ## v0.2.0 — zombie cursor (2026-11-13)
 
