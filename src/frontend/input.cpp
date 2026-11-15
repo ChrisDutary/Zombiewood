@@ -147,24 +147,40 @@ void Mapper::SetScreen(int w, int h) {
 void Mapper::Key(int sc, bool down) {
   if (sc < 0 || sc >= 512) return;
   keys_[sc] = down;
-  if (down) key_hit_[sc] = true;
+  if (down) {
+    key_hit_[sc] = true;
+    last_device_ = Device::Keyboard;
+  }
 }
 void Mapper::PadButton(int b, bool down) {
   if (b < 0 || b >= 32) return;
   pad_buttons_[b] = down;
-  if (down) pad_hit_[b] = true;
+  if (down) {
+    pad_hit_[b] = true;
+    last_device_ = Device::Gamepad;
+  }
   any_pad_input_ = true;
 }
 void Mapper::PadAxis(int a, float v) {
   if (a < 0 || a >= 8) return;
   pad_axes_[a] = v;
   if (std::fabs(v) > 0.2f) any_pad_input_ = true;
+  if (std::fabs(v) > 0.5f) last_device_ = Device::Gamepad;  // umbral alto: que la deriva del stick no cambie el modo
+}
+
+std::vector<Mapper::HintSource> Mapper::HintSources() const {
+  std::vector<HintSource> out;
+  for (const auto& b : buttons_)
+    out.push_back({b.name, b.x, b.y, b.bind.keys.empty() ? -1 : b.bind.keys.front(),
+                   b.bind.pad_buttons.empty() ? -1 : b.bind.pad_buttons.front()});
+  return out;
 }
 
 void Mapper::MouseButton(int button, bool down, int x, int y) {
   mouse_x_ = x;
   mouse_y_ = y;
   if (button == SDL_BUTTON_LEFT && mouse_touch_) {
+    if (down) last_device_ = Device::Mouse;  // raton como pantalla tactil
     if (down != mouse_left_) {
       mouse_left_ = down;
       mouse_queue_.push_back({down ? 1 : 0, x, y});

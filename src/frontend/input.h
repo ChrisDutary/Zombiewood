@@ -42,6 +42,18 @@ class Mapper {
   // Suelta todo lo pulsado (pausa / perdida de foco).
   void ReleaseAll(const TouchFn& touch);
 
+  // v0.3.0: ultimo dispositivo usado (para ocultar sticks tactiles en modo auto y elegir las ayudas de botones).
+  enum class Device { Keyboard, Mouse, Gamepad };
+  Device last_device() const { return last_device_; }
+  // Botones del HUD con su primera tecla y su primer boton de mando (para las ayudas en pantalla).
+  struct HintSource {
+    std::string name;
+    float x = 0, y = 0;  // normalizado a la resolucion interna
+    int key = -1;        // scancode SDL o -1
+    int pad = -1;        // SDL_GameControllerButton o -1
+  };
+  std::vector<HintSource> HintSources() const;
+
   // Estado crudo del mando tal como lo recibe el mapeador (para el probador del menu F1).
   float pad_axis(int a) const { return a >= 0 && a < 8 ? pad_axes_[a] : 0.f; }
   bool pad_button(int b) const { return b >= 0 && b < 32 && pad_buttons_[b]; }
@@ -87,6 +99,7 @@ class Mapper {
   bool key_hit_[512] = {};
   bool pad_hit_[32] = {};
   bool any_pad_input_ = false;
+  Device last_device_ = Device::Keyboard;
   float pad_axes_[8] = {};
   float deadzone_ = 0.25f, trigger_threshold_ = 0.4f;
   bool mouse_touch_ = true;

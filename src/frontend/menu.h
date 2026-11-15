@@ -23,6 +23,13 @@ struct MenuStats {
   std::string renderer;  // GL_RENDERER
 };
 
+// Ayuda de boton en pantalla (v0.3.0): posicion en pixeles de la ventana y que dibujar.
+struct ButtonHint {
+  enum Glyph { Key, PsCross, PsCircle, PsSquare, PsTriangle, PadText } glyph = Key;
+  float x = 0, y = 0;  // centro de la insignia
+  std::string text;    // tecla ("E", "Space") o boton ("RB", "A", "R1")
+};
+
 // Acciones que el menu pide al hilo GL / UI.
 struct MenuActions {
   std::function<void()> apply_vsync;           // SDL_GL_SetSwapInterval segun settings
@@ -49,8 +56,10 @@ class Menu {
   // Empieza a esperar la tecla/boton para un control ("move_stick.up", "buttons.0"...); para pruebas.
   void StartCapture(const std::string& target, bool add = false);
   bool bar_visible() const { return bar_; }
-  // ¿Hay que dibujar algo este frame? (barra, ventanas o contador de FPS)
+  // ¿Hay que dibujar algo este frame? (barra, ventanas, contador de FPS, ayudas de botones o aviso)
   bool Active() const;
+  // Ayudas de botones a dibujar este frame (vacio = ninguna).
+  void SetHints(std::vector<ButtonHint> hints) { hints_ = std::move(hints); }
   // Entrega un evento SDL a ImGui (solo si la barra esta visible). Devuelve true si el menu se lo queda
   // (no debe llegar al juego): captura de tecla para remapear, o ImGui quiere raton/teclado.
   bool ProcessEvent(const SDL_Event& e);
@@ -64,6 +73,9 @@ class Menu {
   void DrawControls();
   void DrawAbout(const MenuStats& st);
   void DrawFps(const MenuStats& st);
+  void DrawHints();
+  bool ToastVisible() const;
+  void DrawUpdateToast();
   void Changed();  // guarda zombiewood.json
 
   SDL_Window* win_ = nullptr;
@@ -83,6 +95,8 @@ class Menu {
   void DrawGamepad(nlohmann::json& cfg, bool& changed);
   std::string status_;
   double status_until_ = 0;
+  std::vector<ButtonHint> hints_;
+  double update_toast_until_ = -1;  // -1 = aun no mostrado
 };
 
 }  // namespace zw

@@ -32,6 +32,11 @@ struct Settings {
   float volume = 1.0f;        // 0..1, audio del juego (Vox -> AudioTrack)
   float video_volume = 1.0f;  // 0..1, audio de los videos
   bool mute = false;
+  // v0.3.0
+  std::string ui_language = "auto";  // idioma del menu/asistente: "auto" (sistema) | "es" | "en"
+  std::string hud_sticks = "auto";   // sticks tactiles del HUD: "auto" (ocultar con teclado/mando) | "show" | "hide"
+  bool button_hints = true;          // ayudas de botones (tecla / boton del mando) junto al HUD
+  bool update_check = true;          // consultar GitHub (una vez al dia) por una version nueva
   std::string pad_driver = "auto";       // "auto" (HIDAPI) | "compat" (sin HIDAPI, si Steam/DS4Windows bloquean el mando); al reiniciar
   std::string audio_latency = "normal";  // "low" (80 ms) | "normal" (150 ms) | "safe" (250 ms); al reiniciar
   int AudioLatencyMs() const { return audio_latency == "low" ? 80 : audio_latency == "safe" ? 250 : 150; }

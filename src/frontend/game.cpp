@@ -30,7 +30,10 @@
 #include "cpu/cpu.h"
 #include "cpu/hle.h"
 #include "frontend/cursor.h"
+#include "frontend/hud.h"
+#include "frontend/i18n.h"
 #include "frontend/input.h"
+#include "frontend/update_check.h"
 #include "frontend/menu.h"
 #include "frontend/png.h"
 #include "frontend/saves.h"
@@ -259,6 +262,83 @@ class GlThread {
     glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(read_fb));
     const auto path = s_.screens_dir / (name + ".png");
     if (WritePngRgba(path, px.data(), dw_, dh_, true)) log::Info("captura de ventana: {}", path.string());
+  }
+
+  // v0.3.0: sticks tactiles (ocultar/mostrar) y ayudas de botones, segun el estado del juego (hud.h).
+  void UpdateHud() {
+    const hud::GameState gs = hud::Read();
+    if (gs.in_level) {
+      const bool hide = s_.hud_sticks == "hide" ||
+                        (s_.hud_sticks == "auto" && mapper_.last_device() != input::Mapper::Device::Mouse);
+      // Al entrar en una escena el HUD Flash se recrea: reaplicar al entrar, al cambiar y cada ~2 s por seguridad.
+      if (!was_in_level_ || hide != sticks_hidden_ || frame_ - sticks_applied_frame_ > 120) {
+        jni::call_native("Game_nativeXperiaToggleJoysticks", hide ? kSticksHidden : kSticksVisible);
+        if (!was_in_level_ || hide != sticks_hidden_) log::Info("hud: sticks tactiles {}", hide ? "ocultos" : "visibles");
+        sticks_hidden_ = hide;
+        sticks_applied_frame_ = frame_;
+      }
+    }
+    if (gs.in_level != was_in_level_) log::Info("hud: {} escena", gs.in_level ? "dentro de" : "fuera de");
+    was_in_level_ = gs.in_level;
+
+    std::vector<ButtonHint> hints;
+    if (s_.button_hints && gs.in_level && !gs.paused && !paused_) {
+      const bool pad = mapper_.last_device() == input::Mapper::Device::Gamepad;
+      const bool ps = pad && PlayStationConnected();
+      const float off = 0.075f * rh_;  // la insignia va junto al boton, hacia el centro de la pantalla, sin taparlo
+      for (const auto& src : mapper_.HintSources()) {
+        if (src.name == "aceptar") continue;  // solo aparece en dialogos
+        ButtonHint h;
+        h.x = rx_ + src.x * rw_ + (src.x < 0.5f ? off : -off);
+        h.y = ry_ + src.y * rh_ + (src.y < 0.5f ? off : -off);
+        if (pad) {
+          if (src.pad < 0) continue;
+          const auto b = static_cast<SDL_GameControllerButton>(src.pad);
+          if (ps && b == SDL_CONTROLLER_BUTTON_A) h.glyph = ButtonHint::PsCross;
+          else if (ps && b == SDL_CONTROLLER_BUTTON_B) h.glyph = ButtonHint::PsCircle;
+          else if (ps && b == SDL_CONTROLLER_BUTTON_X) h.glyph = ButtonHint::PsSquare;
+          else if (ps && b == SDL_CONTROLLER_BUTTON_Y) h.glyph = ButtonHint::PsTriangle;
+          else {
+            h.glyph = ButtonHint::PadText;
+            h.text = PadButtonText(b, ps);
+          }
+        } else {
+          if (src.key < 0) continue;
+          h.glyph = ButtonHint::Key;
+          h.text = SDL_GetScancodeName(static_cast<SDL_Scancode>(src.key));
+        }
+        hints.push_back(std::move(h));
+      }
+    }
+    menu_.SetHints(std::move(hints));
+  }
+
+  static bool PlayStationConnected() {
+    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+      if (!SDL_IsGameController(i)) continue;
+      const auto t = SDL_GameControllerTypeForIndex(i);
+      if (t == SDL_CONTROLLER_TYPE_PS3 || t == SDL_CONTROLLER_TYPE_PS4 || t == SDL_CONTROLLER_TYPE_PS5) return true;
+    }
+    return false;
+  }
+
+  static std::string PadButtonText(SDL_GameControllerButton b, bool ps) {
+    switch (b) {
+      case SDL_CONTROLLER_BUTTON_A: return "A";
+      case SDL_CONTROLLER_BUTTON_B: return "B";
+      case SDL_CONTROLLER_BUTTON_X: return "X";
+      case SDL_CONTROLLER_BUTTON_Y: return "Y";
+      case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: return ps ? "L1" : "LB";
+      case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: return ps ? "R1" : "RB";
+      case SDL_CONTROLLER_BUTTON_START: return ps ? "Options" : "Start";
+      case SDL_CONTROLLER_BUTTON_BACK: return ps ? "Create" : "View";
+      case SDL_CONTROLLER_BUTTON_LEFTSTICK: return ps ? "L3" : "LS";
+      case SDL_CONTROLLER_BUTTON_RIGHTSTICK: return ps ? "R3" : "RS";
+      default: {
+        const char* n = SDL_GameControllerGetStringForButton(b);
+        return n ? n : "?";
+      }
+    }
   }
 
   void DrawMenuOnly() {
@@ -723,6 +803,7 @@ class GlThread {
       jni::call_native("GL2JNILib_step");
       const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
       ++frame_;
+      UpdateHud();
       if (frame_ % 300 == 0) {  // ~5 s: registrar cortes de audio nuevos (diagnostico del audio "lageado")
         const uint64_t u = audio::underrun_count();
         if (u != last_underruns_) {
@@ -806,6 +887,10 @@ class GlThread {
   bool paused_ = false, want_pause_ = false, quit_ = false, pending_resize_ = false, trace_input_ = false;
   long long frame_ = 0;
   uint64_t last_underruns_ = 0;
+  // v0.3.0 HUD. Valores de Application::XperiaToggleJoysticks: 0 = frame 0 del HUD, !=0 = frame 1 (verificado en QA).
+  static constexpr int kSticksVisible = 0, kSticksHidden = 1;
+  bool was_in_level_ = false, sticks_hidden_ = false;
+  long long sticks_applied_frame_ = 0;
   Clock::time_point next_frame_;
   std::deque<std::string> cmds_;
   Clock::time_point wait_until_{};
@@ -868,6 +953,8 @@ int RunGame(const GameOptions& opt) {
   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4, s.pad_driver == "compat" ? "0" : "1");
   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "0");
   log::Info("mandos: driver '{}'", s.pad_driver);
+  log::Info("idioma del menu: {} (preferencia '{}')", i18n::SetLanguage(s.ui_language), s.ui_language);
+  if (s.update_check) update::Start(paths::Home());
 
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
     log::Error("SDL_Init fallo: {}", SDL_GetError());

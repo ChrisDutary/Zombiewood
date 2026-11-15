@@ -17,6 +17,7 @@
 #include "core/config.h"
 #include "core/log.h"
 #include "core/paths.h"
+#include "frontend/i18n.h"
 #include "frontend/settings.h"
 #include "imgui.h"
 #include "installer/installer.h"
@@ -56,6 +57,8 @@ std::vector<fs::path> OpenDialog(SDL_Window* owner, const wchar_t* title, const 
 }
 
 std::string U8(const fs::path& p) { return PathToUtf8(p); }
+// UTF-8 -> UTF-16 para los titulos de los dialogos de Windows (traducidos con T()).
+std::wstring Wide(const char* s) { return fs::path(std::u8string(reinterpret_cast<const char8_t*>(s))).wstring(); }
 
 class SetupUi {
  public:
@@ -119,20 +122,20 @@ class SetupUi {
     log::Info("setup: APK {}: zip {}, lib {}, archiveObbCache {} partes, game.apk {}, videos {}", U8(apk), info.ok, info.has_lib,
               info.obb_cache_parts, info.has_inner_apk, info.has_videos);
     if (!info.ok || !info.error.empty()) {
-      Fail("El archivo elegido no es un APK de Zombiewood valido:\n" + (info.error.empty() ? std::string("ZIP ilegible") : info.error));
+      Fail(T("El archivo elegido no es un APK de Zombiewood valido:\n") + (info.error.empty() ? std::string(T("ZIP ilegible")) : info.error));
       return;
     }
     if (!info.has_obb_cache && obbs.empty()) {
       obbs = installer::FindObbsNear(apk);
       if (obbs.empty()) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Zombiewood",
-                                 "Este APK no trae los datos (OBB).\n\nElige ahora los archivos main.1501...obb y "
-                                 "patch.15325...obb de tu copia del juego (normalmente en Android/obb/"
-                                 "com.gameloft.android.ANMP.GloftZOHM).",
+                                 T("Este APK no trae los datos (OBB).\n\nElige ahora los archivos main.1501...obb y "
+                                   "patch.15325...obb de tu copia del juego (normalmente en Android/obb/"
+                                   "com.gameloft.android.ANMP.GloftZOHM)."),
                                  win_);
         obbs = PickObbDialog(win_);
         if (obbs.empty()) {
-          Fail("Sin los archivos .obb no se puede instalar el juego.");
+          Fail(T("Sin los archivos .obb no se puede instalar el juego."));
           return;
         }
       }
@@ -175,67 +178,67 @@ class SetupUi {
     ImGui::Begin("##setup", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
     ImGui::SetCursorPos(ImVec2(40, 30));
     ImGui::BeginGroup();
-    ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.35f, 1), "ZOMBIEWOOD  -  port nativo para PC");
+    ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.35f, 1), T("ZOMBIEWOOD  -  port nativo para PC"));
     ImGui::Separator();
     ImGui::Spacing();
     const float w = std::min(vp->Size.x - 80, 900.0f);
     ImGui::PushTextWrapPos(40 + w);
     switch (state_) {
       case State::Welcome:
-        ImGui::TextUnformatted("No se encontraron los datos del juego.");
+        ImGui::TextUnformatted(T("No se encontraron los datos del juego."));
         ImGui::Spacing();
         ImGui::TextUnformatted(
-            "Este port no incluye ningun archivo de Zombiewood: necesitas tu propia copia del juego para Android "
-            "(version 1.5.3). Elige el APK:");
-        ImGui::BulletText("el APK grande (incluye assets/archiveObbCache.zip.00N con los OBB), o");
-        ImGui::BulletText("el APK original + los archivos main.1501...obb y patch.15325...obb.");
+            T("Este port no incluye ningun archivo de Zombiewood: necesitas tu propia copia del juego para Android "
+              "(version 1.5.3). Elige el APK:"));
+        ImGui::BulletText(T("el APK grande (incluye assets/archiveObbCache.zip.00N con los OBB), o"));
+        ImGui::BulletText(T("el APK original + los archivos main.1501...obb y patch.15325...obb."));
         ImGui::Spacing();
-        ImGui::TextDisabled("Se extraera en: %s", U8(paths::DefaultGameDir()).c_str());
+        ImGui::TextDisabled(T("Se extraera en: %s"), U8(paths::DefaultGameDir()).c_str());
         ImGui::Spacing();
-        if (ImGui::Button("Elegir APK... (Enter)", ImVec2(260, 0)) || std::exchange(enter_, false)) {
+        if (ImGui::Button(T("Elegir APK... (Enter)"), ImVec2(260, 0)) || std::exchange(enter_, false)) {
           const auto apk = PickApkDialog(win_);
           if (!apk.empty()) StartInstall(apk, o_.obbs);
         }
         ImGui::SameLine();
-        if (ImGui::Button("Salir", ImVec2(120, 0))) done_ = true;
+        if (ImGui::Button(T("Salir"), ImVec2(120, 0))) done_ = true;
         break;
       case State::Installing: {
         const double tot = static_cast<double>(prog_.total.load()), dn = static_cast<double>(prog_.done.load());
         const float frac = tot > 0 ? static_cast<float>(std::min(1.0, dn / tot)) : 0.0f;
-        ImGui::Text("Instalando desde %s", U8(src_.apk.filename()).c_str());
+        ImGui::Text(T("Instalando desde %s"), U8(src_.apk.filename()).c_str());
         ImGui::Spacing();
         ImGui::ProgressBar(frac, ImVec2(w, 0), std::format("{:.0f} / {:.0f} MB", dn / 1048576.0, tot / 1048576.0).c_str());
         ImGui::TextUnformatted(prog_.Stage().c_str());
         ImGui::Spacing();
-        if (ImGui::Button("Cancelar", ImVec2(160, 0))) prog_.cancel = true;
+        if (ImGui::Button(T("Cancelar"), ImVec2(160, 0))) prog_.cancel = true;
         break;
       }
       case State::Done:
-        ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1), "Instalacion completada (%zu archivos).", res_.files.size());
-        ImGui::Text("libZombieWood.so: %s", res_.version_ok ? "version 1.5.3 verificada (SHA-256)" : "VERSION NO VERIFICADA");
-        for (const auto& wmsg : res_.warnings) ImGui::TextColored(ImVec4(1, 0.75f, 0.3f, 1), "Aviso: %s", wmsg.c_str());
+        ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1), T("Instalacion completada (%zu archivos)."), res_.files.size());
+        ImGui::Text("libZombieWood.so: %s", res_.version_ok ? T("version 1.5.3 verificada (SHA-256)") : T("VERSION NO VERIFICADA"));
+        for (const auto& wmsg : res_.warnings) ImGui::TextColored(ImVec4(1, 0.75f, 0.3f, 1), T("Aviso: %s"), wmsg.c_str());
         ImGui::Spacing();
-        ImGui::TextDisabled("Pulsa F1 durante el juego para abrir el menu (graficos, audio, controles, carpetas).");
+        ImGui::TextDisabled(T("Pulsa F1 durante el juego para abrir el menu (graficos, audio, controles, carpetas)."));
         ImGui::Spacing();
-        if (ImGui::Button("Jugar (Enter)", ImVec2(180, 0)) || std::exchange(enter_, false)) {
+        if (ImGui::Button(T("Jugar (Enter)"), ImVec2(180, 0)) || std::exchange(enter_, false)) {
           ok = true;
           done_ = true;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Abrir carpeta de datos", ImVec2(260, 0))) paths::OpenFolder(paths::DefaultGameDir());
+        if (ImGui::Button(T("Abrir carpeta de datos"), ImVec2(260, 0))) paths::OpenFolder(paths::DefaultGameDir());
         break;
       case State::Error:
-        ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "No se pudo instalar:");
+        ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), T("No se pudo instalar:"));
         ImGui::TextUnformatted(res_.error.c_str());
         ImGui::Spacing();
-        if (ImGui::Button("Elegir otro APK...", ImVec2(240, 0))) {
+        if (ImGui::Button(T("Elegir otro APK..."), ImVec2(240, 0))) {
           const auto apk = PickApkDialog(win_);
           if (!apk.empty()) StartInstall(apk, {});
         }
         ImGui::SameLine();
-        if (ImGui::Button("Ver logs", ImVec2(140, 0))) paths::OpenFolder(paths::LogsDir());
+        if (ImGui::Button(T("Ver logs"), ImVec2(140, 0))) paths::OpenFolder(paths::LogsDir());
         ImGui::SameLine();
-        if (ImGui::Button("Salir", ImVec2(120, 0))) done_ = true;
+        if (ImGui::Button(T("Salir"), ImVec2(120, 0))) done_ = true;
         break;
     }
     ImGui::PopTextWrapPos();
@@ -267,12 +270,12 @@ class SetupUi {
 }  // namespace
 
 fs::path PickApkDialog(SDL_Window* owner) {
-  auto v = OpenDialog(owner, L"Elige el APK de Zombiewood (1.5.3)", L"APK de Android (*.apk)\0*.apk\0Todos los archivos\0*.*\0\0", false);
+  auto v = OpenDialog(owner, Wide(T("Elige el APK de Zombiewood (1.5.3)")).c_str(), L"APK (*.apk)\0*.apk\0*.*\0*.*\0\0", false);
   return v.empty() ? fs::path() : v.front();
 }
 
 std::vector<fs::path> PickObbDialog(SDL_Window* owner) {
-  return OpenDialog(owner, L"Elige los OBB de Zombiewood (main y patch)", L"OBB (*.obb)\0*.obb\0Todos los archivos\0*.*\0\0", true);
+  return OpenDialog(owner, Wide(T("Elige los OBB de Zombiewood (main y patch)")).c_str(), L"OBB (*.obb)\0*.obb\0*.*\0*.*\0\0", true);
 }
 
 bool EnsureGameData(SDL_Window* win, Settings& s, const SetupOptions& o) {

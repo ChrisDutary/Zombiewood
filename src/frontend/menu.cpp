@@ -12,8 +12,10 @@
 #include "backends/imgui_impl_sdl2.h"
 #include "core/log.h"
 #include "core/paths.h"
+#include "frontend/i18n.h"
 #include "frontend/input.h"
 #include "frontend/settings.h"
+#include "frontend/update_check.h"
 #include "hle/audio/audio_track.h"
 #include "imgui.h"
 
@@ -52,11 +54,11 @@ bool PlayStationPad() {
 
 std::string PadLabel(const std::string& n, bool ps) {
   if (!ps) return n;
-  static const std::pair<const char*, const char*> kPs[] = {
-      {"a", "Cruz"}, {"b", "Circulo"}, {"x", "Cuadrado"}, {"y", "Triangulo"}, {"leftshoulder", "L1"},
+  const std::pair<const char*, const char*> kPs[] = {  // no static: el idioma del menu puede cambiar en caliente
+      {"a", T("Cruz")}, {"b", T("Circulo")}, {"x", T("Cuadrado")}, {"y", T("Triangulo")}, {"leftshoulder", "L1"},
       {"rightshoulder", "R1"}, {"lefttrigger", "L2"}, {"righttrigger", "R2"}, {"leftstick", "L3"},
       {"rightstick", "R3"}, {"back", "Create"}, {"start", "Options"}, {"guide", "PS"}, {"touchpad", "Touchpad"},
-      {"dpup", "Cruceta arriba"}, {"dpdown", "Cruceta abajo"}, {"dpleft", "Cruceta izq."}, {"dpright", "Cruceta der."},
+      {"dpup", T("Cruceta arriba")}, {"dpdown", T("Cruceta abajo")}, {"dpleft", T("Cruceta izq.")}, {"dpright", T("Cruceta der.")},
       {"misc1", "Mute"}};
   for (const auto& [k, v] : kPs)
     if (n == k) return v;
@@ -135,10 +137,16 @@ void Menu::Open(const std::string& w) {
   else if (w == "none") show_graphics_ = show_audio_ = show_controls_ = show_about_ = false;
 }
 
-bool Menu::Active() const { return ctx_ && (bar_ || s_->show_fps); }
+bool Menu::ToastVisible() const {
+  std::string tag, url;
+  const double now = SDL_GetTicks64() / 1000.0;
+  return s_->update_check && update::Available(tag, url) && (update_toast_until_ < 0 || update_toast_until_ > now);
+}
+
+bool Menu::Active() const { return ctx_ && (bar_ || s_->show_fps || !hints_.empty() || ToastVisible()); }
 
 bool Menu::ProcessEvent(const SDL_Event& e) {
-  if (!ctx_ || !bar_) return false;
+  if (!ctx_ || (!bar_ && !ToastVisible())) return false;
   ImGui::SetCurrentContext(ctx_);
   // Captura para remapear: la siguiente tecla / boton de mando es la asignacion.
   if (!capture_.empty() && (e.type == SDL_KEYDOWN || e.type == SDL_CONTROLLERBUTTONDOWN)) {
@@ -146,7 +154,7 @@ bool Menu::ProcessEvent(const SDL_Event& e) {
       if (e.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
         wizard_.clear();
         capture_.clear();
-        status_ = "Asistente cancelado";
+        status_ = T("Asistente cancelado");
         status_until_ = ImGui::GetTime() + 3;
       }
       return true;
@@ -170,7 +178,7 @@ bool Menu::ProcessEvent(const SDL_Event& e) {
     }
     s_->input = cfg;
     if (act_.apply_input) act_.apply_input();
-    status_ = std::format("Asignado: {}", key.empty() ? "mando " + pad : key);
+    status_ = std::string(T("Asignado: ")) + (key.empty() ? T("mando ") + PadLabel(pad, PlayStationPad()) : key);
     status_until_ = ImGui::GetTime() + 3;
     capture_.clear();
     Changed();
@@ -195,7 +203,7 @@ bool Menu::ProcessEvent(const SDL_Event& e) {
 
 void Menu::Changed() {
   if (!s_->Save()) {
-    status_ = "No se pudo guardar zombiewood.json";
+    status_ = T("No se pudo guardar zombiewood.json");
     status_until_ = ImGui::GetTime() + 5;
   }
 }
@@ -214,6 +222,8 @@ void Menu::Draw(int dw, int dh, const MenuStats& st) {
     if (show_about_) DrawAbout(st);
   }
   if (s_->show_fps) DrawFps(st);
+  if (!hints_.empty()) DrawHints();
+  DrawUpdateToast();
   ImGui::Render();
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   GLint vp[4];
@@ -226,16 +236,16 @@ void Menu::Draw(int dw, int dh, const MenuStats& st) {
 void Menu::DrawMenuBar(const MenuStats& st) {
   if (!ImGui::BeginMainMenuBar()) return;
   if (ImGui::BeginMenu("Zombiewood")) {
-    if (ImGui::MenuItem(st.paused ? "Reanudar" : "Pausar", "")) act_.set_paused(!st.paused);
-    if (ImGui::MenuItem("Captura de pantalla", "F12")) act_.screenshot();
+    if (ImGui::MenuItem(st.paused ? T("Reanudar") : T("Pausar"), "")) act_.set_paused(!st.paused);
+    if (ImGui::MenuItem(T("Captura de pantalla"), "F12")) act_.screenshot();
     ImGui::Separator();
-    if (ImGui::MenuItem("Ocultar menu", "F1")) Toggle();
-    if (ImGui::MenuItem("Salir")) act_.quit();
+    if (ImGui::MenuItem(T("Ocultar menu"), "F1")) Toggle();
+    if (ImGui::MenuItem(T("Salir"))) act_.quit();
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Graficos")) {
-    ImGui::MenuItem("Opciones de graficos...", nullptr, &show_graphics_);
-    if (ImGui::MenuItem("Pantalla completa", "F11", s_->fullscreen)) {
+  if (ImGui::BeginMenu(T("Graficos"))) {
+    ImGui::MenuItem(T("Opciones de graficos..."), nullptr, &show_graphics_);
+    if (ImGui::MenuItem(T("Pantalla completa"), "F11", s_->fullscreen)) {
       s_->fullscreen = !s_->fullscreen;
       act_.set_fullscreen(s_->fullscreen);
       Changed();
@@ -245,43 +255,49 @@ void Menu::DrawMenuBar(const MenuStats& st) {
       act_.apply_vsync();
       Changed();
     }
-    if (ImGui::MenuItem("Mostrar FPS", nullptr, s_->show_fps)) {
+    if (ImGui::MenuItem(T("Mostrar FPS"), nullptr, s_->show_fps)) {
       s_->show_fps = !s_->show_fps;
       Changed();
     }
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Audio")) {
-    ImGui::MenuItem("Opciones de audio...", nullptr, &show_audio_);
-    if (ImGui::MenuItem("Silenciar", nullptr, s_->mute)) {
+    ImGui::MenuItem(T("Opciones de audio..."), nullptr, &show_audio_);
+    if (ImGui::MenuItem(T("Silenciar"), nullptr, s_->mute)) {
       s_->mute = !s_->mute;
       act_.apply_audio();
       Changed();
     }
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Controles")) {
-    ImGui::MenuItem("Remapear controles...", nullptr, &show_controls_);
+  if (ImGui::BeginMenu(T("Controles"))) {
+    ImGui::MenuItem(T("Remapear controles..."), nullptr, &show_controls_);
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Carpetas")) {
-    if (ImGui::MenuItem("Partidas guardadas (saves)")) paths::OpenFolder(s_->vfs.saves_dir);
-    if (ImGui::MenuItem("Copias de seguridad de saves")) paths::OpenFolder(paths::Home() / "saves_backup");
-    if (ImGui::MenuItem("Crear copia de seguridad ahora")) {
+  if (ImGui::BeginMenu(T("Carpetas"))) {
+    if (ImGui::MenuItem(T("Partidas guardadas (saves)"))) paths::OpenFolder(s_->vfs.saves_dir);
+    if (ImGui::MenuItem(T("Copias de seguridad de saves"))) paths::OpenFolder(paths::Home() / "saves_backup");
+    if (ImGui::MenuItem(T("Crear copia de seguridad ahora"))) {
       act_.backup_now();
-      status_ = "Copia de seguridad creada";
+      status_ = T("Copia de seguridad creada");
       status_until_ = ImGui::GetTime() + 3;
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Logs")) paths::OpenFolder(paths::LogsDir());
-    if (ImGui::MenuItem("Capturas")) paths::OpenFolder(s_->screens_dir);
-    if (ImGui::MenuItem("Datos del juego")) paths::OpenFolder(s_->game_dir);
-    if (ImGui::MenuItem("Carpeta del port (zombiewood.json)")) paths::OpenFolder(paths::Home());
+    if (ImGui::MenuItem(T("Capturas"))) paths::OpenFolder(s_->screens_dir);
+    if (ImGui::MenuItem(T("Datos del juego"))) paths::OpenFolder(s_->game_dir);
+    if (ImGui::MenuItem(T("Carpeta del port (zombiewood.json)"))) paths::OpenFolder(paths::Home());
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Ayuda")) {
-    ImGui::MenuItem("Acerca de / estado", nullptr, &show_about_);
+  if (ImGui::BeginMenu(T("Ayuda"))) {
+    ImGui::MenuItem(T("Acerca de / estado"), nullptr, &show_about_);
     ImGui::EndMenu();
+  }
+  // v0.3.0: version nueva disponible.
+  if (std::string tag, url; s_->update_check && update::Available(tag, url)) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.9f, 0.4f, 1));
+    if (ImGui::MenuItem((std::string(T("Descargar")) + " " + tag).c_str())) SDL_OpenURL(url.c_str());
+    ImGui::PopStyleColor();
   }
   // Derecha: estado / fps.
   std::string right = std::format("{:.0f} fps | {}x{}", st.fps, st.internal_w, st.internal_h);
@@ -295,10 +311,10 @@ void Menu::DrawMenuBar(const MenuStats& st) {
 void Menu::DrawGraphics() {
   ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowPos(ImVec2(40, 50), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin("Graficos", &show_graphics_)) return ImGui::End();
+  if (!ImGui::Begin(T("Graficos"), &show_graphics_)) return ImGui::End();
   // Backend ANGLE
   const char* backends[] = {"d3d11", "gl", "vulkan", "d3d9"};
-  const char* backend_names[] = {"Direct3D 11 (recomendado)", "OpenGL (escritorio, via ANGLE)", "Vulkan (via ANGLE)", "Direct3D 9"};
+  const char* backend_names[] = {T("Direct3D 11 (recomendado)"), T("OpenGL (escritorio, via ANGLE)"), "Vulkan (via ANGLE)", "Direct3D 9"};
   int bi = 0;
   for (int i = 0; i < 4; ++i)
     if (s_->backend == backends[i]) bi = i;
@@ -306,11 +322,11 @@ void Menu::DrawGraphics() {
     s_->backend = backends[bi];
     Changed();
   }
-  if (s_->backend != g_start_backend) ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "Se aplica al reiniciar el juego.");
+  if (s_->backend != g_start_backend) ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), T("Se aplica al reiniciar el juego."));
   ImGui::Separator();
   // Resolucion interna
   bool follow = s_->follow_window;
-  if (ImGui::Checkbox("Resolucion interna = ventana", &follow)) {
+  if (ImGui::Checkbox(T("Resolucion interna = ventana"), &follow)) {
     s_->follow_window = follow;
     act_.apply_resolution();
     Changed();
@@ -319,10 +335,10 @@ void Menu::DrawGraphics() {
   int ri = -1;
   for (int i = 0; i < static_cast<int>(std::size(kRes)); ++i)
     if (kRes[i].w == s_->internal_w && kRes[i].h == s_->internal_h) ri = i;
-  const std::string cur = ri >= 0 ? kRes[ri].name : std::format("{} x {} (personalizada)", s_->internal_w, s_->internal_h);
-  if (ImGui::BeginCombo("Resolucion interna", cur.c_str())) {
+  const std::string cur = ri >= 0 ? T(kRes[ri].name) : std::format("{} x {} {}", s_->internal_w, s_->internal_h, T("(personalizada)"));
+  if (ImGui::BeginCombo(T("Resolucion interna"), cur.c_str())) {
     for (int i = 0; i < static_cast<int>(std::size(kRes)); ++i)
-      if (ImGui::Selectable(kRes[i].name, i == ri)) {
+      if (ImGui::Selectable(T(kRes[i].name), i == ri)) {
         s_->internal_w = kRes[i].w;
         s_->internal_h = kRes[i].h;
         act_.apply_resolution();
@@ -331,53 +347,77 @@ void Menu::DrawGraphics() {
     ImGui::EndCombo();
   }
   ImGui::EndDisabled();
-  if (ImGui::Checkbox("Filtrado lineal al escalar", &s_->linear_filter)) Changed();
+  if (ImGui::Checkbox(T("Filtrado lineal al escalar"), &s_->linear_filter)) Changed();
   ImGui::Separator();
   if (ImGui::Checkbox("VSync", &s_->vsync)) {
     act_.apply_vsync();
     Changed();
   }
   int lim = s_->fps_limit;
-  if (ImGui::SliderInt("Limite FPS (0 = libre)", &lim, 0, 240)) s_->fps_limit = lim;
+  if (ImGui::SliderInt(T("Limite FPS (0 = libre)"), &lim, 0, 240)) s_->fps_limit = lim;
   if (ImGui::IsItemDeactivatedAfterEdit()) Changed();
   bool fs = s_->fullscreen;
-  if (ImGui::Checkbox("Pantalla completa (F11)", &fs)) {
+  if (ImGui::Checkbox(T("Pantalla completa (F11)"), &fs)) {
     s_->fullscreen = fs;
     act_.set_fullscreen(fs);
     Changed();
   }
-  if (ImGui::Checkbox("Mostrar FPS", &s_->show_fps)) Changed();
-  if (ImGui::Checkbox("Pausar al perder el foco", &s_->pause_on_focus_loss)) Changed();
+  if (ImGui::Checkbox(T("Mostrar FPS"), &s_->show_fps)) Changed();
+  if (ImGui::Checkbox(T("Pausar al perder el foco"), &s_->pause_on_focus_loss)) Changed();
   ImGui::Separator();
   bool zcur = s_->cursor == "zombie";
-  if (ImGui::Checkbox("Cursor zombi", &zcur)) {
+  if (ImGui::Checkbox(T("Cursor zombi"), &zcur)) {
     s_->cursor = zcur ? "zombie" : "system";
     if (act_.apply_cursor) act_.apply_cursor();
     Changed();
   }
   ImGui::BeginDisabled(!zcur);
   static const int kCursorSizes[] = {32, 48, 64, 96};
-  static const char* kCursorNames[] = {"Pequeno (32 px)", "Normal (48 px)", "Grande (64 px)", "Muy grande (96 px)"};
+  const char* kCursorNames[] = {T("Pequeno (32 px)"), "Normal (48 px)", T("Grande (64 px)"), T("Muy grande (96 px)")};
   int ci = 1;
   for (int i = 0; i < 4; ++i)
     if (s_->cursor_size == kCursorSizes[i]) ci = i;
-  if (ImGui::Combo("Tamano del cursor", &ci, kCursorNames, 4)) {
+  if (ImGui::Combo(T("Tamano del cursor"), &ci, kCursorNames, 4)) {
     s_->cursor_size = kCursorSizes[ci];
     if (act_.apply_cursor) act_.apply_cursor();
     Changed();
   }
   ImGui::EndDisabled();
   ImGui::Separator();
-  if (ImGui::Checkbox("Saltar videos", &s_->skip_videos)) Changed();
+  if (ImGui::Checkbox(T("Saltar videos"), &s_->skip_videos)) Changed();
   ImGui::BeginDisabled(s_->skip_videos);
-  if (ImGui::Checkbox("Logo de Gameloft al arrancar", &s_->play_logo)) Changed();
+  if (ImGui::Checkbox(T("Logo de Gameloft al arrancar"), &s_->play_logo)) Changed();
   ImGui::EndDisabled();
   int lang = std::clamp(s_->language, 0, 9);
-  if (ImGui::Combo("Idioma", &lang, kLanguages, 10)) {
+  if (ImGui::Combo(T("Idioma del juego"), &lang, kLanguages, 10)) {
     s_->language = lang;
     Changed();
   }
-  if (s_->language != g_start_language) ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "El idioma se aplica al reiniciar.");
+  if (s_->language != g_start_language) ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), T("El idioma del juego se aplica al reiniciar."));
+  // v0.3.0: idioma del menu (inmediato).
+  const char* kUiIds[] = {"auto", "es", "en"};
+  const char* kUiNames[] = {T("Automatico (sistema)"), "Espanol", "English"};
+  int ui = 0;
+  for (int i = 0; i < 3; ++i)
+    if (s_->ui_language == kUiIds[i]) ui = i;
+  if (ImGui::Combo(T("Idioma del menu"), &ui, kUiNames, 3)) {
+    s_->ui_language = kUiIds[ui];
+    i18n::SetLanguage(s_->ui_language);
+    Changed();
+  }
+  ImGui::Separator();
+  // v0.3.0: sticks tactiles y ayudas de botones.
+  const char* kStickIds[] = {"auto", "show", "hide"};
+  const char* kStickNames[] = {T("Automatico (ocultar con teclado/mando)"), T("Mostrar siempre"), T("Ocultar siempre")};
+  int si = 0;
+  for (int i = 0; i < 3; ++i)
+    if (s_->hud_sticks == kStickIds[i]) si = i;
+  if (ImGui::Combo(T("Sticks tactiles en pantalla"), &si, kStickNames, 3)) {
+    s_->hud_sticks = kStickIds[si];
+    Changed();
+  }
+  ImGui::TextDisabled("%s", T("Solo dentro de las escenas. Con el raton como toque se muestran."));
+  if (ImGui::Checkbox(T("Ayudas de botones en pantalla"), &s_->button_hints)) Changed();
   ImGui::End();
 }
 
@@ -386,37 +426,37 @@ void Menu::DrawAudio() {
   ImGui::SetNextWindowPos(ImVec2(80, 70), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Audio", &show_audio_)) return ImGui::End();
   float v = s_->volume * 100;
-  if (ImGui::SliderFloat("Volumen del juego", &v, 0, 100, "%.0f %%")) {
+  if (ImGui::SliderFloat(T("Volumen del juego"), &v, 0, 100, "%.0f %%")) {
     s_->volume = v / 100;
     act_.apply_audio();
   }
   if (ImGui::IsItemDeactivatedAfterEdit()) Changed();
   float vv = s_->video_volume * 100;
-  if (ImGui::SliderFloat("Volumen de los videos", &vv, 0, 100, "%.0f %%")) s_->video_volume = vv / 100;
+  if (ImGui::SliderFloat(T("Volumen de los videos"), &vv, 0, 100, "%.0f %%")) s_->video_volume = vv / 100;
   if (ImGui::IsItemDeactivatedAfterEdit()) Changed();
-  if (ImGui::Checkbox("Silenciar", &s_->mute)) {
+  if (ImGui::Checkbox(T("Silenciar"), &s_->mute)) {
     act_.apply_audio();
     Changed();
   }
   ImGui::Separator();
   static const char* kLatIds[] = {"low", "normal", "safe"};
-  static const char* kLatNames[] = {"Baja (80 ms)", "Normal (150 ms)", "Segura (250 ms)"};
+  const char* kLatNames[] = {T("Baja (80 ms)"), "Normal (150 ms)", T("Segura (250 ms)")};
   int li = 1;
   for (int i = 0; i < 3; ++i)
     if (s_->audio_latency == kLatIds[i]) li = i;
-  if (ImGui::Combo("Latencia de audio", &li, kLatNames, 3)) {
+  if (ImGui::Combo(T("Latencia de audio"), &li, kLatNames, 3)) {
     s_->audio_latency = kLatIds[li];
     Changed();
   }
-  ImGui::TextDisabled("Si el audio se corta, usa Segura. Se aplica al reiniciar.");
-  ImGui::Text("Cortes de audio en esta sesion: %llu", (unsigned long long)audio::underrun_count());
+  ImGui::TextDisabled(T("Si el audio se corta, usa Segura. Se aplica al reiniciar."));
+  ImGui::Text(T("Cortes de audio en esta sesion: %llu"), (unsigned long long)audio::underrun_count());
   ImGui::End();
 }
 
 void Menu::DrawControls() {
   ImGui::SetNextWindowSize(ImVec2(640, 520), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowPos(ImVec2(60, 50), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin("Controles", &show_controls_)) return ImGui::End();
+  if (!ImGui::Begin(T("Controles"), &show_controls_)) return ImGui::End();
   auto cfg = EffectiveInput(s_->input);
   bool changed = false;
   const bool ps = PlayStationPad();
@@ -428,33 +468,33 @@ void Menu::DrawControls() {
     const std::string grp = id.substr(0, dot);
     const std::size_t i = static_cast<std::size_t>(std::atoi(id.c_str() + dot + 1));
     if (grp == "buttons" && cfg["buttons"].is_array() && i < cfg["buttons"].size())
-      return "Boton HUD: " + cfg["buttons"][i].value("name", std::string("?"));
+      return std::string(T("Boton HUD: ")) + T(cfg["buttons"][i].value("name", std::string("?")).c_str());
     if (grp == "android_keys" && cfg["android_keys"].is_array() && i < cfg["android_keys"].size()) {
       const int c = cfg["android_keys"][i].value("code", 0);
-      return c == 4 ? "Atras (BACK)" : c == 82 ? "Menu (MENU)" : std::format("Tecla Android {}", c);
+      return c == 4 ? std::string(T("Atras (BACK)")) : c == 82 ? std::string("Menu (MENU)") : T("Tecla Android ") + std::to_string(c);
     }
     return id;
   };
   if (!capture_.empty() && !wizard_.empty())
-    ImGui::TextColored(ImVec4(1, 0.85f, 0.2f, 1), "Asistente (%zu/%zu): pulsa en el MANDO el boton para \"%s\"  (Esc cancela)",
+    ImGui::TextColored(ImVec4(1, 0.85f, 0.2f, 1), T("Asistente (%zu/%zu): pulsa en el MANDO el boton para \"%s\"  (Esc cancela)"),
                        wizard_pos_ + 1, wizard_.size(), capture_label(capture_).c_str());
   else if (!capture_.empty())
-    ImGui::TextColored(ImVec4(1, 0.85f, 0.2f, 1), "Pulsa una tecla o un boton del mando para \"%s\"...", capture_.c_str());
+    ImGui::TextColored(ImVec4(1, 0.85f, 0.2f, 1), T("Pulsa una tecla o un boton del mando para \"%s\"..."), capture_.c_str());
   else
-    ImGui::TextDisabled("\"Cambiar\" sustituye; \"+\" anade otra tecla/boton; \"x\" borra.");
+    ImGui::TextDisabled(T("\"Cambiar\" sustituye; \"+\" anade otra tecla/boton; \"x\" borra."));
   auto capture_btn = [&](const std::string& id, bool add) {
     ImGui::PushID((id + (add ? "+" : "=")).c_str());
     const bool waiting = capture_ == id && capture_add_ == add;
-    if (ImGui::SmallButton(waiting ? "..." : add ? "+" : "Cambiar")) {
+    if (ImGui::SmallButton(waiting ? "..." : add ? "+" : T("Cambiar"))) {
       capture_ = waiting ? "" : id;
       capture_add_ = add;
     }
     ImGui::PopID();
   };
   if (ImGui::BeginTable("ctl", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
-    ImGui::TableSetupColumn("Accion", ImGuiTableColumnFlags_WidthFixed, 170);
-    ImGui::TableSetupColumn("Teclado");
-    ImGui::TableSetupColumn("Mando");
+    ImGui::TableSetupColumn(T("Accion"), ImGuiTableColumnFlags_WidthFixed, 170);
+    ImGui::TableSetupColumn(T("Teclado"));
+    ImGui::TableSetupColumn(T("Mando"));
     ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 130);
     ImGui::TableHeadersRow();
     for (const char* stick : {"move_stick", "aim_stick"}) {
@@ -462,8 +502,8 @@ void Menu::DrawControls() {
       for (const char* dir : {"up", "down", "left", "right"}) {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        const char* dn = !std::strcmp(dir, "up") ? "arriba" : !std::strcmp(dir, "down") ? "abajo" : !std::strcmp(dir, "left") ? "izquierda" : "derecha";
-        ImGui::Text("%s %s", move ? "Mover" : "Apuntar", dn);
+        const char* dn = !std::strcmp(dir, "up") ? T("arriba") : !std::strcmp(dir, "down") ? T("abajo") : !std::strcmp(dir, "left") ? T("izquierda") : T("derecha");
+        ImGui::Text("%s %s", move ? T("Mover") : T("Apuntar"), dn);
         ImGui::TableNextColumn();
         const auto& k = cfg[stick]["keys"];
         ImGui::TextUnformatted(k.contains(dir) && k[dir].is_string() ? k[dir].get<std::string>().c_str() : "-");
@@ -500,34 +540,36 @@ void Menu::DrawControls() {
         ImGui::PopID();
       }
     };
-    list_rows("buttons", [](const nlohmann::json& b) { return "Boton HUD: " + b.value("name", std::string("?")); });
+    list_rows("buttons", [](const nlohmann::json& b) {
+      return std::string(T("Boton HUD: ")) + T(b.value("name", std::string("?")).c_str());
+    });
     list_rows("android_keys", [](const nlohmann::json& k) {
       const int c = k.value("code", 0);
-      return c == 4 ? std::string("Atras (BACK)") : c == 82 ? std::string("Menu (MENU)") : std::format("Tecla Android {}", c);
+      return c == 4 ? std::string(T("Atras (BACK)")) : c == 82 ? std::string("Menu (MENU)") : T("Tecla Android ") + std::to_string(c);
     });
     ImGui::EndTable();
   }
   ImGui::Separator();
   float dz = cfg.value("deadzone", 0.25f);
-  if (ImGui::SliderFloat("Zona muerta del mando", &dz, 0.05f, 0.6f, "%.2f")) {
+  if (ImGui::SliderFloat(T("Zona muerta del mando"), &dz, 0.05f, 0.6f, "%.2f")) {
     cfg["deadzone"] = dz;
     changed = true;
   }
   bool mt = cfg.value("mouse_touch", true);
-  if (ImGui::Checkbox("Clic izquierdo = tocar la pantalla", &mt)) {
+  if (ImGui::Checkbox(T("Clic izquierdo = tocar la pantalla"), &mt)) {
     cfg["mouse_touch"] = mt;
     changed = true;
   }
   const char* aim_opts[] = {"right", "middle", "none"};
-  const char* aim_names[] = {"clic derecho", "clic central", "desactivado"};
+  const char* aim_names[] = {T("clic derecho"), T("clic central"), T("desactivado")};
   int ai = 2;
   for (int i = 0; i < 3; ++i)
     if (cfg.value("mouse_aim_button", std::string("right")) == aim_opts[i]) ai = i;
-  if (ImGui::Combo("Apuntar/disparar con el raton", &ai, aim_names, 3)) {
+  if (ImGui::Combo(T("Apuntar/disparar con el raton"), &ai, aim_names, 3)) {
     cfg["mouse_aim_button"] = aim_opts[ai];
     changed = true;
   }
-  if (ImGui::Button("Restaurar controles por defecto")) {
+  if (ImGui::Button(T("Restaurar controles por defecto"))) {
     cfg = input::Mapper::DefaultConfig();
     changed = true;
     capture_.clear();
@@ -547,55 +589,55 @@ void Menu::WizardAdvance() {
   } else {
     wizard_.clear();
     capture_.clear();
-    status_ = "Mando configurado. Prueba los botones en la partida.";
+    status_ = T("Mando configurado. Prueba los botones en la partida.");
     status_until_ = ImGui::GetTime() + 5;
   }
 }
 
 void Menu::DrawGamepad(nlohmann::json& cfg, bool& changed) {
-  if (!ImGui::CollapsingHeader("Mando", ImGuiTreeNodeFlags_DefaultOpen)) return;
+  if (!ImGui::CollapsingHeader(T("Mando"), ImGuiTreeNodeFlags_DefaultOpen)) return;
   const bool ps = PlayStationPad();
   int pads = 0;
   for (int i = 0; i < SDL_NumJoysticks(); ++i) {
     const char* name = SDL_IsGameController(i) ? SDL_GameControllerNameForIndex(i) : SDL_JoystickNameForIndex(i);
-    ImGui::BulletText("%s%s", name ? name : "?", SDL_IsGameController(i) ? "" : "  (sin mapeo: modo crudo)");
+    ImGui::BulletText("%s%s", name ? name : "?", SDL_IsGameController(i) ? "" : T("  (sin mapeo: modo crudo)"));
     ++pads;
   }
-  if (!pads) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "No hay ningun mando conectado.");
+  if (!pads) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), T("No hay ningun mando conectado."));
 
   // Probador en vivo: lo que recibe el juego.
   const float lx = mapper_->pad_axis(SDL_CONTROLLER_AXIS_LEFTX), ly = mapper_->pad_axis(SDL_CONTROLLER_AXIS_LEFTY);
   const float rx = mapper_->pad_axis(SDL_CONTROLLER_AXIS_RIGHTX), ry = mapper_->pad_axis(SDL_CONTROLLER_AXIS_RIGHTY);
-  ImGui::Text("Stick izq. %+.2f %+.2f   Stick der. %+.2f %+.2f   %s %.2f  %s %.2f", lx, ly, rx, ry, ps ? "L2" : "LT",
+  ImGui::Text(T("Stick izq. %+.2f %+.2f   Stick der. %+.2f %+.2f   %s %.2f  %s %.2f"), lx, ly, rx, ry, ps ? "L2" : "LT",
               mapper_->pad_axis(SDL_CONTROLLER_AXIS_TRIGGERLEFT), ps ? "R2" : "RT", mapper_->pad_axis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT));
   std::string held;
   for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b)
     if (mapper_->pad_button(b))
       if (const char* n = SDL_GameControllerGetStringForButton(static_cast<SDL_GameControllerButton>(b)))
         held += (held.empty() ? "" : " ") + PadLabel(n, ps);
-  ImGui::Text("Botones pulsados: %s", held.empty() ? "-" : held.c_str());
+  ImGui::Text(T("Botones pulsados: %s"), held.empty() ? "-" : held.c_str());
   if (pads && !mapper_->any_pad_input())
     ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1),
-                       "Aun no llega nada del mando. Si pulsas y no cambia: cierra Steam/DS4Windows o usa el driver \"Compatibilidad\".");
+                       T("Aun no llega nada del mando. Si pulsas y no cambia: cierra Steam/DS4Windows o usa el driver \"Compatibilidad\"."));
 
   // Sticks: cual mueve y cual apunta.
   bool swap = cfg["move_stick"].value("pad_stick", std::string("left")) == "right";
-  if (ImGui::Checkbox("Intercambiar sticks (derecho = mover, izquierdo = apuntar)", &swap)) {
+  if (ImGui::Checkbox(T("Intercambiar sticks (derecho = mover, izquierdo = apuntar)"), &swap)) {
     cfg["move_stick"]["pad_stick"] = swap ? "right" : "left";
     cfg["aim_stick"]["pad_stick"] = swap ? "left" : "right";
     changed = true;
   }
   // Driver.
   static const char* kDrv[] = {"auto", "compat"};
-  static const char* kDrvNames[] = {"Automatico (recomendado)", "Compatibilidad (sin HIDAPI)"};
+  const char* kDrvNames[] = {T("Automatico (recomendado)"), T("Compatibilidad (sin HIDAPI)")};
   int di = s_->pad_driver == "compat" ? 1 : 0;
-  if (ImGui::Combo("Driver de mandos", &di, kDrvNames, 2)) {
+  if (ImGui::Combo(T("Driver de mandos"), &di, kDrvNames, 2)) {
     s_->pad_driver = kDrv[di];
     Changed();
   }
-  ImGui::TextDisabled("El driver se aplica al reiniciar el juego.");
+  ImGui::TextDisabled(T("El driver se aplica al reiniciar el juego."));
   // Asistente.
-  if (ImGui::Button(wizard_.empty() ? "Asistente: mapear con el mando" : "Cancelar asistente")) {
+  if (ImGui::Button(wizard_.empty() ? T("Asistente: mapear con el mando") : T("Cancelar asistente"))) {
     if (wizard_.empty()) {
       for (std::size_t i = 0; cfg["buttons"].is_array() && i < cfg["buttons"].size(); ++i) wizard_.push_back(std::format("buttons.{}", i));
       for (std::size_t i = 0; cfg["android_keys"].is_array() && i < cfg["android_keys"].size(); ++i)
@@ -611,24 +653,85 @@ void Menu::DrawGamepad(nlohmann::json& cfg, bool& changed) {
     }
   }
   ImGui::SameLine();
-  ImGui::TextDisabled("Pide cada accion en orden; los sticks se configuran arriba.");
+  ImGui::TextDisabled(T("Pide cada accion en orden; los sticks se configuran arriba."));
 }
 
 void Menu::DrawAbout(const MenuStats& st) {
   ImGui::SetNextWindowSize(ImVec2(560, 0), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowPos(ImVec2(120, 90), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin("Acerca de", &show_about_)) return ImGui::End();
-  ImGui::TextUnformatted("Zombiewood - port nativo para Windows (so-loader + JIT ARM)");
-  ImGui::TextDisabled("Los datos del juego son de tu copia; el port no distribuye nada de Gameloft.");
+  if (!ImGui::Begin(T("Acerca de"), &show_about_)) return ImGui::End();
+  ImGui::TextUnformatted(T("Zombiewood - port nativo para PC (so-loader + JIT ARM)"));
+  ImGui::Text(T("Version: %s"), ZW_VERSION);
+  ImGui::TextDisabled(T("Los datos del juego son de tu copia; el port no distribuye nada de Gameloft."));
   ImGui::Separator();
   ImGui::Text("Renderer: %s", st.renderer.c_str());
-  ImGui::Text("Backend configurado: %s", s_->backend.c_str());
-  ImGui::Text("Interna %dx%d, ventana %dx%d", st.internal_w, st.internal_h, st.window_w, st.window_h);
+  ImGui::Text(T("Backend configurado: %s"), s_->backend.c_str());
+  ImGui::Text(T("Interna %dx%d, ventana %dx%d"), st.internal_w, st.internal_h, st.window_w, st.window_h);
   ImGui::Text("%.1f fps, step %.2f ms, frame %lld", st.fps, st.step_ms, st.frame);
-  ImGui::Text("Datos: %s", s_->game_dir.string().c_str());
+  ImGui::Text(T("Datos: %s"), s_->game_dir.string().c_str());
   ImGui::Text("Saves: %s", s_->vfs.saves_dir.string().c_str());
   ImGui::Separator();
-  ImGui::TextUnformatted("F1 menu | F11 pantalla completa | F12 captura | Esc atras");
+  ImGui::TextUnformatted(T("F1 menu | F11 pantalla completa | F12 captura | Esc atras"));
+  ImGui::Separator();
+  if (ImGui::Checkbox(T("Buscar actualizaciones al iniciar"), &s_->update_check)) Changed();
+  ImGui::TextDisabled("%s", T("Consulta las releases publicas de GitHub (una vez al dia). No envia datos tuyos."));
+  ImGui::End();
+}
+
+// Ayudas de botones (v0.3.0): insignias pequenas junto a los botones del HUD. Las formas de PlayStation se dibujan
+// con primitivas (sin arte de terceros ni fuentes especiales).
+void Menu::DrawHints() {
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  const float r = 13.0f;
+  for (const auto& h : hints_) {
+    const ImVec2 c(h.x, h.y);
+    if (h.glyph == ButtonHint::Key || h.glyph == ButtonHint::PadText) {
+      const ImVec2 ts = ImGui::CalcTextSize(h.text.c_str());
+      const float w = std::max(ts.x + 12.0f, 2 * r);
+      const ImVec2 a(c.x - w / 2, c.y - r), b(c.x + w / 2, c.y + r);
+      dl->AddRectFilled(a, b, IM_COL32(15, 18, 15, 200), h.glyph == ButtonHint::Key ? 4.0f : r);
+      dl->AddRect(a, b, IM_COL32(170, 220, 120, 230), h.glyph == ButtonHint::Key ? 4.0f : r, 0, 1.5f);
+      dl->AddText(ImVec2(c.x - ts.x / 2, c.y - ts.y / 2), IM_COL32(240, 245, 235, 255), h.text.c_str());
+      continue;
+    }
+    dl->AddCircleFilled(c, r, IM_COL32(15, 18, 15, 200));
+    dl->AddCircle(c, r, IM_COL32(200, 200, 200, 220), 0, 1.5f);
+    const float s = r * 0.5f;
+    switch (h.glyph) {
+      case ButtonHint::PsCross:
+        dl->AddLine(ImVec2(c.x - s, c.y - s), ImVec2(c.x + s, c.y + s), IM_COL32(124, 178, 232, 255), 2.5f);
+        dl->AddLine(ImVec2(c.x - s, c.y + s), ImVec2(c.x + s, c.y - s), IM_COL32(124, 178, 232, 255), 2.5f);
+        break;
+      case ButtonHint::PsCircle: dl->AddCircle(c, s, IM_COL32(255, 102, 102, 255), 0, 2.5f); break;
+      case ButtonHint::PsSquare:
+        dl->AddRect(ImVec2(c.x - s, c.y - s), ImVec2(c.x + s, c.y + s), IM_COL32(255, 105, 248, 255), 0, 0, 2.5f);
+        break;
+      case ButtonHint::PsTriangle:
+        dl->AddTriangle(ImVec2(c.x, c.y - s), ImVec2(c.x - s, c.y + s * 0.8f), ImVec2(c.x + s, c.y + s * 0.8f),
+                        IM_COL32(64, 226, 160, 255), 2.5f);
+        break;
+      default: break;
+    }
+  }
+}
+
+void Menu::DrawUpdateToast() {
+  std::string tag, url;
+  if (!s_->update_check || !update::Available(tag, url)) return;
+  const double now = SDL_GetTicks64() / 1000.0;
+  if (update_toast_until_ < 0) update_toast_until_ = now + 12;  // se muestra 12 s la primera vez
+  if (now > update_toast_until_) return;
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x / 2, vp->Pos.y + (bar_ ? 34.0f : 12.0f)), ImGuiCond_Always, ImVec2(0.5f, 0));
+  ImGui::SetNextWindowBgAlpha(0.85f);
+  ImGui::Begin("##update", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+  ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.4f, 1), "%s%s", T("Nueva version disponible: "), tag.c_str());
+  ImGui::SameLine();
+  if (ImGui::SmallButton(T("Descargar"))) SDL_OpenURL(url.c_str());
+  ImGui::SameLine();
+  if (ImGui::SmallButton("x")) update_toast_until_ = 0;
   ImGui::End();
 }
 

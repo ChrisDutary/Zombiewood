@@ -50,6 +50,12 @@ Settings Settings::Load(const GameOptions* opt) {
   s.volume = std::clamp(ConfigGet(cfg, "volume", 1.0f), 0.0f, 1.0f);
   s.video_volume = std::clamp(ConfigGet(cfg, "video_volume", 1.0f), 0.0f, 1.0f);
   s.mute = ConfigGet(cfg, "mute", false);
+  s.ui_language = ConfigGet<std::string>(cfg, "ui_language", "auto");
+  if (s.ui_language != "auto" && s.ui_language != "es" && s.ui_language != "en") s.ui_language = "auto";
+  s.hud_sticks = ConfigGet<std::string>(cfg, "hud_sticks", "auto");
+  if (s.hud_sticks != "auto" && s.hud_sticks != "show" && s.hud_sticks != "hide") s.hud_sticks = "auto";
+  s.button_hints = ConfigGet(cfg, "button_hints", true);
+  s.update_check = ConfigGet(cfg, "update_check", true);
   s.pad_driver = ConfigGet<std::string>(cfg, "pad_driver", "auto");
   if (s.pad_driver != "auto" && s.pad_driver != "compat") s.pad_driver = "auto";
   s.audio_latency = ConfigGet<std::string>(cfg, "audio_latency", "normal");
@@ -101,6 +107,10 @@ void Settings::MergeInto(nlohmann::json& cfg) const {
   cfg["mute"] = mute;
   cfg["audio_latency"] = audio_latency;
   cfg["pad_driver"] = pad_driver;
+  cfg["ui_language"] = ui_language;
+  cfg["hud_sticks"] = hud_sticks;
+  cfg["button_hints"] = button_hints;
+  cfg["update_check"] = update_check;
   cfg["skip_videos"] = skip_videos;
   cfg["play_logo"] = play_logo;
   cfg["language"] = language;

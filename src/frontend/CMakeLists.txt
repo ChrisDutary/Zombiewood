@@ -1,5 +1,10 @@
 add_library(zw_frontend STATIC window.cpp game.cpp input.cpp png.cpp
-                               settings.cpp setup.cpp menu.cpp saves.cpp video.cpp cursor.cpp)
+                               settings.cpp setup.cpp menu.cpp saves.cpp video.cpp cursor.cpp i18n.cpp
+                               hud.cpp update_check.cpp)
+target_compile_definitions(zw_frontend PUBLIC ZW_VERSION="${PROJECT_VERSION}")
+if(WIN32)
+  target_link_libraries(zw_frontend PRIVATE winhttp)  # aviso de version nueva (update_check.cpp)
+endif()
 target_link_libraries(zw_frontend PUBLIC zw_core zw_imgui zw_installer zw_hle_libc SDL2::SDL2
                                   PRIVATE zw_loader zw_cpu zw_hle_gles zw_hle_audio zw_jni
                                           unofficial::angle::libGLESv2
