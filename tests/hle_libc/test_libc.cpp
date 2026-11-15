@@ -221,6 +221,47 @@ static void TestStdioPosix(const fs::path& home) {
   CHECK(C<int>("lseek", ofd, 2, 0) == 2 && C<int>("read", ofd, b, 10) == 4 && std::memcmp(g2h(b), "cdef", 4) == 0);
   CHECK(C<int>("close", ofd) == 0 && C<int>("unlink", S(dir + "/raw.bin")) == 0);
 
+  // Rutas sin distinguir mayusculas (el juego mezcla "android/Android", "Sound.bar/sound.bar"...). En Windows lo da
+  // el sistema de ficheros; en Linux lo resuelve el VFS componente a componente (HostJoin en vfs.cpp).
+  {
+    fs::create_directories(home / "saves" / "MixedDir" / "Inner");
+    std::FILE* hf = std::fopen((home / "saves" / "MixedDir" / "Inner" / "Data.BIN").string().c_str(), "wb");
+    CHECK(hf != nullptr);
+    if (hf) {
+      std::fputs("ci-ok", hf);
+      std::fclose(hf);
+    }
+    const std::string pkg_upper = "/DATA/data/COM.gameloft.android.anmp.GloftZOHM";
+    CHECK(C<int>("stat", S(dir + "/mixeddir/inner/data.bin"), st) == 0 && mem::R64(st + 48) == 5);
+    CHECK(C<int>("stat", S(pkg_upper + "/MIXEDDIR/INNER/DATA.bin"), st) == 0 && mem::R64(st + 48) == 5);
+    CHECK(C<int>("stat", S(dir + "/mixeddir/INNER"), st) == 0 && (mem::R32(st + 16) & 0xF000) == 0x4000);
+    gaddr cf = C<gaddr>("fopen", S(dir + "/MIXEDDIR/inner/DATA.bin"), S("rb"));
+    CHECK(cf != 0);
+    if (cf) {
+      CHECK(C<std::uint32_t>("fread", b, 1, 64, cf) == 5 && std::memcmp(g2h(b), "ci-ok", 5) == 0);
+      C<int>("fclose", cf);
+    }
+    // Un fichero nuevo en un directorio existente con otras mayusculas cae en ESE directorio (no crea un gemelo).
+    cf = C<gaddr>("fopen", S(dir + "/mixeddir/INNER/new.txt"), S("w"));
+    CHECK(cf != 0);
+    if (cf) C<int>("fclose", cf);
+    CHECK(fs::exists(home / "saves" / "MixedDir" / "Inner" / "new.txt"));
+    // Reescribir con otras mayusculas reutiliza el fichero existente.
+    cf = C<gaddr>("fopen", S(dir + "/MixedDir/Inner/DATA.BIN"), S("w"));
+    CHECK(cf != 0);
+    if (cf) {
+      C<int>("fputs", S("x"), cf);
+      C<int>("fclose", cf);
+    }
+    CHECK(fs::file_size(home / "saves" / "MixedDir" / "Inner" / "Data.BIN") == 1);
+    int n_inner = 0;
+    for (const auto& de : fs::directory_iterator(home / "saves" / "MixedDir" / "Inner")) n_inner += de.is_regular_file() ? 1 : 0;
+    CHECK(n_inner == 2);
+    CHECK(C<int>("unlink", S(dir + "/mixeddir/inner/NEW.TXT")) == 0 && C<int>("unlink", S(dir + "/mixeddir/inner/data.bin")) == 0);
+    CHECK(C<int>("rmdir", S(dir + "/MIXEDDIR/inner")) == 0 && C<int>("rmdir", S(dir + "/mixeddir")) == 0);
+    CHECK(!fs::exists(home / "saves" / "MixedDir"));
+  }
+
   // cwd virtual y rutas relativas
   CHECK(C<int>("chdir", S(dir)) == 0);
   CHECK(C<gaddr>("getcwd", b, 64) == b && mem::ReadCStr(b) == dir);

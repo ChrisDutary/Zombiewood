@@ -140,6 +140,7 @@ class SetupUi {
     ImGui::Spacing();
     ImGui::TextUnformatted("Escribe o pega (Ctrl+V) la ruta completa del APK:");
     ImGui::SetNextItemWidth(w - 260);
+    if (!std::exchange(path_focused_, true)) ImGui::SetKeyboardFocusHere();  // listo para escribir/pegar sin clic
     const bool entered = ImGui::InputText("##apk_path", path_buf_, sizeof path_buf_, ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine();
     const bool clicked = ImGui::Button("Instalar", ImVec2(120, 0));
@@ -270,6 +271,7 @@ class SetupUi {
   std::thread worker_;
   bool done_ = false, quit_ = false, enter_ = false;
   char path_buf_[2048] = "";
+  bool path_focused_ = false;
 };
 
 }  // namespace

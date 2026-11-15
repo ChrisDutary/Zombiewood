@@ -78,11 +78,12 @@ void CrashSignal(int sig, siginfo_t* info, void* raw) {
                                "rip: {} = {}+0x{:X}\n\n",
                                plat::Name(), SigName(sig), sig, info ? info->si_code : 0, addr, rip, module, off));
       if (uc) {
-        const auto& g = uc->uc_mcontext.gregs;
+        const auto reg = [uc](int r) { return static_cast<std::uint64_t>(uc->uc_mcontext.gregs[r]); };
         WriteStr(fd, std::format("rax {:016x} rbx {:016x} rcx {:016x} rdx {:016x}\nrsi {:016x} rdi {:016x} rbp {:016x} rsp {:016x}\n"
                                  "r8  {:016x} r9  {:016x} r10 {:016x} r11 {:016x}\nr12 {:016x} r13 {:016x} r14 {:016x} r15 {:016x}\n\n",
-                                 g[REG_RAX], g[REG_RBX], g[REG_RCX], g[REG_RDX], g[REG_RSI], g[REG_RDI], g[REG_RBP], g[REG_RSP],
-                                 g[REG_R8], g[REG_R9], g[REG_R10], g[REG_R11], g[REG_R12], g[REG_R13], g[REG_R14], g[REG_R15]));
+                                 reg(REG_RAX), reg(REG_RBX), reg(REG_RCX), reg(REG_RDX), reg(REG_RSI), reg(REG_RDI),
+                                 reg(REG_RBP), reg(REG_RSP), reg(REG_R8), reg(REG_R9), reg(REG_R10), reg(REG_R11),
+                                 reg(REG_R12), reg(REG_R13), reg(REG_R14), reg(REG_R15)));
       }
       WriteStr(fd, "backtrace (hilo que fallo; resolver con addr2line -e zombiewood <offset>):\n");
       void* frames[64];
