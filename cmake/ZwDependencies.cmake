@@ -1,8 +1,28 @@
 # Dependencias: vcpkg (SDL2, ANGLE, nlohmann-json, boost) + FetchContent fijado (ImGui, dynarmic).
 find_package(SDL2 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(unofficial-angle CONFIG REQUIRED)
 find_package(Boost REQUIRED)
+find_package(Threads REQUIRED)
+
+# GLES2/EGL: en Windows ANGLE (vcpkg); en Linux las bibliotecas del sistema (Mesa / driver), sin ANGLE.
+# zw_gles / zw_egl son los unicos nombres que usan los CMakeLists de src/.
+add_library(zw_gles INTERFACE)
+add_library(zw_egl INTERFACE)
+if(WIN32)
+  find_package(unofficial-angle CONFIG REQUIRED)
+  target_link_libraries(zw_gles INTERFACE unofficial::angle::libGLESv2)
+  target_link_libraries(zw_egl INTERFACE unofficial::angle::libEGL)
+else()
+  find_library(ZW_GLESV2_LIB NAMES GLESv2 REQUIRED)
+  find_library(ZW_EGL_LIB NAMES EGL REQUIRED)
+  find_path(ZW_GLES_INCLUDE NAMES GLES2/gl2.h REQUIRED)
+  find_path(ZW_EGL_INCLUDE NAMES EGL/egl.h REQUIRED)
+  target_link_libraries(zw_gles INTERFACE ${ZW_GLESV2_LIB})
+  target_include_directories(zw_gles INTERFACE ${ZW_GLES_INCLUDE})
+  target_link_libraries(zw_egl INTERFACE ${ZW_EGL_LIB})
+  target_include_directories(zw_egl INTERFACE ${ZW_EGL_INCLUDE})
+  message(STATUS "GLES del sistema: ${ZW_GLESV2_LIB} / ${ZW_EGL_LIB}")
+endif()
 
 include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
@@ -26,7 +46,7 @@ add_library(zw_imgui STATIC
   ${imgui_src_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
 target_include_directories(zw_imgui PUBLIC ${imgui_src_SOURCE_DIR} ${imgui_src_SOURCE_DIR}/backends)
 target_compile_definitions(zw_imgui PUBLIC IMGUI_IMPL_OPENGL_ES2)
-target_link_libraries(zw_imgui PUBLIC SDL2::SDL2 unofficial::angle::libGLESv2 unofficial::angle::libEGL)
+target_link_libraries(zw_imgui PUBLIC SDL2::SDL2 zw_gles zw_egl)
 
 # ---- dynarmic (frontend A32, backend x64), commit fijado ----
 set(DYNARMIC_FRONTENDS "A32" CACHE STRING "" FORCE)
@@ -53,6 +73,9 @@ if(MSVC AND ZW_OPTIMIZE_DEPS_IN_DEBUG)
     string(REGEX REPLACE "/Ob[0-3]" "" ${_v} "${${_v}}")
     set(${_v} "${${_v}} /O2 /Ob2")
   endforeach()
+elseif(NOT MSVC AND ZW_OPTIMIZE_DEPS_IN_DEBUG)
+  set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O2")
+  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O2")
 endif()
 FetchContent_MakeAvailable(dynarmic)
 set(CMAKE_C_FLAGS_DEBUG "${_zw_saved_c_debug}")
@@ -62,8 +85,11 @@ set(CMAKE_CXX_FLAGS_DEBUG "${_zw_saved_cxx_debug}")
 # reservando solo 8 bytes de pila; la ABI x64 exige 32 de "shadow space" (+8 de alineacion). Con MSVC
 # el callee escribe en ese espacio y pisa la direccion de retorno del manejador -> crash en el primer
 # fallo de fastmem. Idempotente; se aplica en cada configure sobre el arbol ya descargado.
+# Solo Windows: en Linux dynarmic usa exception_handler_posix.cpp (SIGSEGV), que no necesita parche.
 set(_zw_dyn_eh "${dynarmic_SOURCE_DIR}/src/dynarmic/backend/x64/exception_handler_windows.cpp")
-if(EXISTS "${_zw_dyn_eh}")
+if(NOT WIN32)
+  message(STATUS "dynarmic: sin parche de shadow space (solo Windows)")
+elseif(EXISTS "${_zw_dyn_eh}")
   file(READ "${_zw_dyn_eh}" _zw_dyn_eh_src)
   string(FIND "${_zw_dyn_eh_src}" "code.sub(code.rsp, 8);" _zw_dyn_eh_pos)
   if(NOT _zw_dyn_eh_pos EQUAL -1)

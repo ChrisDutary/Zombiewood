@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core/log.h"
+#include "core/platform.h"
 
 namespace zw::saves {
 namespace fs = std::filesystem;
@@ -15,7 +16,7 @@ namespace {
 std::string Now() {
   const auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
   std::tm tm{};
-  localtime_s(&tm, &t);
+  plat::LocalTime(t, tm);
   char buf[32];
   std::strftime(buf, sizeof buf, "%Y%m%d_%H%M%S", &tm);
   return buf;

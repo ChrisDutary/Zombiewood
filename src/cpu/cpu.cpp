@@ -1,8 +1,13 @@
 #include "cpu/cpu.h"
 
+#ifdef _WIN32
 #include <windows.h>
 
 #include <intrin.h>
+#else
+#include <signal.h>
+#include <ucontext.h>
+#endif
 
 #include <atomic>
 #include <cstdio>
@@ -54,6 +59,32 @@ bool EnvFlag(const char* name, bool def) {
   if (!e || !*e) return def;
   return *e != '0';
 }
+
+// Compare-and-swap atomico sobre memoria guest (STREX con fastmem desactivado o fuera de la ruta rapida).
+// MSVC: intrinsecos _InterlockedCompareExchange*. GCC/Clang: __atomic_compare_exchange_n.
+#ifdef _MSC_VER
+bool Cas8(std::uint8_t* p, std::uint8_t v, std::uint8_t e) {
+  return _InterlockedCompareExchange8(reinterpret_cast<char*>(p), char(v), char(e)) == char(e);
+}
+bool Cas16(std::uint8_t* p, std::uint16_t v, std::uint16_t e) {
+  return _InterlockedCompareExchange16(reinterpret_cast<short*>(p), short(v), short(e)) == short(e);
+}
+bool Cas32(std::uint8_t* p, std::uint32_t v, std::uint32_t e) {
+  return _InterlockedCompareExchange(reinterpret_cast<long*>(p), long(v), long(e)) == long(e);
+}
+bool Cas64(std::uint8_t* p, std::uint64_t v, std::uint64_t e) {
+  return _InterlockedCompareExchange64(reinterpret_cast<long long*>(p), (long long)v, (long long)e) == (long long)e;
+}
+#else
+template <class T>
+bool CasT(std::uint8_t* p, T v, T e) {
+  return __atomic_compare_exchange_n(reinterpret_cast<T*>(p), &e, v, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+}
+bool Cas8(std::uint8_t* p, std::uint8_t v, std::uint8_t e) { return CasT<std::uint8_t>(p, v, e); }
+bool Cas16(std::uint8_t* p, std::uint16_t v, std::uint16_t e) { return CasT<std::uint16_t>(p, v, e); }
+bool Cas32(std::uint8_t* p, std::uint32_t v, std::uint32_t e) { return CasT<std::uint32_t>(p, v, e); }
+bool Cas64(std::uint8_t* p, std::uint64_t v, std::uint64_t e) { return CasT<std::uint64_t>(p, v, e); }
+#endif
 
 // longjmp que cruza fronteras de call_guest: se desenrolla la pila host con una excepcion.
 struct LongjmpUnwind {
@@ -156,17 +187,16 @@ struct detail::CpuImpl final : Dynarmic::A32::UserCallbacks {
     return false;
   }
   bool MemoryWriteExclusive8(std::uint32_t a, std::uint8_t v, std::uint8_t e) override {
-    return ExclOk(a, 1) && _InterlockedCompareExchange8(reinterpret_cast<char*>(g_membase + a), char(v), char(e)) == char(e);
+    return ExclOk(a, 1) && Cas8(g_membase + a, v, e);
   }
   bool MemoryWriteExclusive16(std::uint32_t a, std::uint16_t v, std::uint16_t e) override {
-    return ExclOk(a, 2) && _InterlockedCompareExchange16(reinterpret_cast<short*>(g_membase + a), short(v), short(e)) == short(e);
+    return ExclOk(a, 2) && Cas16(g_membase + a, v, e);
   }
   bool MemoryWriteExclusive32(std::uint32_t a, std::uint32_t v, std::uint32_t e) override {
-    return ExclOk(a, 4) && _InterlockedCompareExchange(reinterpret_cast<long*>(g_membase + a), long(v), long(e)) == long(e);
+    return ExclOk(a, 4) && Cas32(g_membase + a, v, e);
   }
   bool MemoryWriteExclusive64(std::uint32_t a, std::uint64_t v, std::uint64_t e) override {
-    return ExclOk(a, 8) &&
-           _InterlockedCompareExchange64(reinterpret_cast<long long*>(g_membase + a), (long long)v, (long long)e) == (long long)e;
+    return ExclOk(a, 8) && Cas64(g_membase + a, v, e);
   }
   bool IsReadOnlyMemory(std::uint32_t a) override {
     const std::uint8_t p = internal::PageProt(a);
@@ -278,6 +308,23 @@ struct TlsHolder {
 };
 thread_local TlsHolder t_holder;
 
+// Violacion de acceso en codigo host (p. ej. una HLE que desreferencia un puntero guest invalido): se registra la
+// direccion (y su equivalente guest), el import en curso y el estado del hilo guest antes de ceder al siguiente
+// manejador (informe de cierre del frontend).
+void LogHostAccessViolation(const void* fault_addr, const void* rip) {
+  static std::atomic<bool> busy{false};
+  if (busy.exchange(true)) return;
+  const auto* p = static_cast<const std::uint8_t*>(fault_addr);
+  std::string msg = std::format("violacion de acceso del host en {} (rip = {})", static_cast<const void*>(p), rip);
+  if (GuestMemory::Contains(p)) msg += std::format(" = direccion guest 0x{:08x}", static_cast<gaddr>(p - g_membase));
+  if (t_cpu) {
+    msg += std::format("\nimport en curso: '{}'\n", t_cpu->current_import());
+    msg += debug::DumpState(*t_cpu);
+  }
+  log::Error("{}", msg);
+}
+
+#ifdef _WIN32
 LPTOP_LEVEL_EXCEPTION_FILTER g_prev_crash_filter = nullptr;  // v0.2.2: el del frontend (minidump), se encadena
 
 LONG WINAPI HostCrashFilter(EXCEPTION_POINTERS* ep) {
@@ -287,21 +334,57 @@ LONG WINAPI HostCrashFilter(EXCEPTION_POINTERS* ep) {
       if (g_prev_crash_filter) g_prev_crash_filter(ep);
     }
   } chain{ep};
-  static std::atomic<bool> busy{false};
-  if (ep && ep->ExceptionRecord && ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && !busy.exchange(true)) {
-    const auto addr = static_cast<std::uintptr_t>(ep->ExceptionRecord->ExceptionInformation[1]);
-    const auto* p = reinterpret_cast<const std::uint8_t*>(addr);
-    std::string msg = std::format("violacion de acceso del host en {} (rip = {})", static_cast<const void*>(p),
-                                  ep->ExceptionRecord->ExceptionAddress);
-    if (GuestMemory::Contains(p)) msg += std::format(" = direccion guest 0x{:08x}", static_cast<gaddr>(p - g_membase));
-    if (t_cpu) {
-      msg += std::format("\nimport en curso: '{}'\n", t_cpu->current_import());
-      msg += debug::DumpState(*t_cpu);
-    }
-    log::Error("{}", msg);
-  }
+  if (ep && ep->ExceptionRecord && ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION)
+    LogHostAccessViolation(reinterpret_cast<const void*>(ep->ExceptionRecord->ExceptionInformation[1]),
+                           ep->ExceptionRecord->ExceptionAddress);
   return EXCEPTION_CONTINUE_SEARCH;
 }
+
+LONG WINAPI DebugVeh(EXCEPTION_POINTERS* ep) {
+  std::fprintf(stderr, "[veh] code=%08lx rip=%p addr=%p\n", ep->ExceptionRecord->ExceptionCode,
+               ep->ExceptionRecord->ExceptionAddress,
+               reinterpret_cast<void*>(ep->ExceptionRecord->NumberParameters > 1 ? ep->ExceptionRecord->ExceptionInformation[1] : 0));
+  return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void InstallHostCrashLogger() {
+  g_prev_crash_filter = SetUnhandledExceptionFilter(HostCrashFilter);
+  if (EnvFlag("ZW_DEBUG_VEH", false)) AddVectoredExceptionHandler(1, DebugVeh);
+}
+#else
+// Linux: manejador de SIGSEGV/SIGBUS. Se instala ANTES de crear el primer Jit: dynarmic registra entonces el suyo
+// (fastmem, exception_handler_posix.cpp) y, cuando el fallo no es de codigo JIT, llama al que habia antes, es decir
+// a este; este registra el fallo y cede al anterior (el informe de cierre del frontend) o a la accion por defecto.
+struct sigaction g_prev_segv {}, g_prev_bus {};
+
+void HostCrashSignal(int sig, siginfo_t* info, void* raw) {
+  const auto* uc = static_cast<const ucontext_t*>(raw);
+  const void* rip = uc ? reinterpret_cast<const void*>(uc->uc_mcontext.gregs[REG_RIP]) : nullptr;
+  LogHostAccessViolation(info ? info->si_addr : nullptr, rip);
+  const struct sigaction& prev = sig == SIGBUS ? g_prev_bus : g_prev_segv;
+  if (prev.sa_flags & SA_SIGINFO) {
+    if (prev.sa_sigaction) {
+      prev.sa_sigaction(sig, info, raw);
+      return;
+    }
+  } else if (prev.sa_handler != SIG_DFL && prev.sa_handler != SIG_IGN) {
+    prev.sa_handler(sig);
+    return;
+  }
+  // Sin manejador anterior: restaurar la accion por defecto y volver; la instruccion se repite y el proceso muere
+  // con la senal original (core dump / codigo de salida correctos).
+  signal(sig, SIG_DFL);
+}
+
+void InstallHostCrashLogger() {
+  struct sigaction sa {};
+  sa.sa_sigaction = HostCrashSignal;
+  sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+  sigemptyset(&sa.sa_mask);
+  sigaction(SIGSEGV, &sa, &g_prev_segv);
+  sigaction(SIGBUS, &sa, &g_prev_bus);
+}
+#endif
 
 // Pagina de "kuser helpers" del kernel Linux ARM (0xffff0000): codigo que el userspace llama por
 // direccion fija (atomicos de protobuf/gcc en ARMv7 antiguo). Implementados con LDREX/STREX.
@@ -343,13 +426,6 @@ void MapKuserHelpers() {
   GuestMemory::Protect(kPage, 0x1000, kProtRX);
 }
 
-LONG WINAPI DebugVeh(EXCEPTION_POINTERS* ep) {
-  std::fprintf(stderr, "[veh] code=%08lx rip=%p addr=%p\n", ep->ExceptionRecord->ExceptionCode,
-               ep->ExceptionRecord->ExceptionAddress,
-               reinterpret_cast<void*>(ep->ExceptionRecord->NumberParameters > 1 ? ep->ExceptionRecord->ExceptionInformation[1] : 0));
-  return EXCEPTION_CONTINUE_SEARCH;
-}
-
 void RunHooks(std::vector<std::function<void(Cpu&)>>& list, Cpu& c) {
   std::vector<std::function<void(Cpu&)>> copy;
   {
@@ -368,8 +444,7 @@ Cpu* detail::CpuImpl::Create(gsize stack_size, std::string name) {
   std::call_once(once, [] {
     internal::HleEnsureInit();
     MapKuserHelpers();
-    g_prev_crash_filter = SetUnhandledExceptionFilter(HostCrashFilter);
-    if (EnvFlag("ZW_DEBUG_VEH", false)) AddVectoredExceptionHandler(1, DebugVeh);
+    InstallHostCrashLogger();
     if (g_trace.load() < 0) {
       if (const char* f = std::getenv("ZW_TRACE_FILTER")) g_trace_filter = f;
       g_trace.store(EnvFlag("ZW_TRACE_IMPORTS", false) ? 1 : 0);
@@ -423,7 +498,7 @@ Cpu* detail::CpuImpl::Create(gsize stack_size, std::string name) {
   cfg.global_monitor = &Monitor();
   cfg.arch_version = Dynarmic::A32::ArchVersion::v8;
   if (EnvFlag("ZW_FASTMEM", true)) {
-    // Requiere el parche de shadow space a dynarmic que aplica cmake/ZwDependencies.cmake.
+    // En Windows requiere el parche de shadow space a dynarmic que aplica cmake/ZwDependencies.cmake.
     cfg.fastmem_pointer = reinterpret_cast<std::uintptr_t>(g_membase);
     cfg.fastmem_exclusive_access = EnvFlag("ZW_FASTMEM_EXCLUSIVE", true);
   } else {

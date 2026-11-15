@@ -1,10 +1,6 @@
 #include "frontend/setup.h"
 
-#include <windows.h>
-#include <commdlg.h>
-
 #include <GLES2/gl2.h>
-#include <SDL_syswm.h>
 
 #include <algorithm>
 #include <chrono>
@@ -17,6 +13,7 @@
 #include "core/config.h"
 #include "core/log.h"
 #include "core/paths.h"
+#include "frontend/platform.h"
 #include "frontend/settings.h"
 #include "imgui.h"
 #include "installer/installer.h"
@@ -24,36 +21,6 @@
 namespace zw {
 namespace fs = std::filesystem;
 namespace {
-
-HWND Hwnd(SDL_Window* w) {
-  SDL_SysWMinfo info;
-  SDL_VERSION(&info.version);
-  return w && SDL_GetWindowWMInfo(w, &info) ? info.info.win.window : nullptr;
-}
-
-std::vector<fs::path> OpenDialog(SDL_Window* owner, const wchar_t* title, const wchar_t* filter, bool multi) {
-  std::vector<wchar_t> buf(32768, L'\0');
-  OPENFILENAMEW ofn{};
-  ofn.lStructSize = sizeof ofn;
-  ofn.hwndOwner = Hwnd(owner);
-  ofn.lpstrFilter = filter;
-  ofn.lpstrFile = buf.data();
-  ofn.nMaxFile = static_cast<DWORD>(buf.size());
-  ofn.lpstrTitle = title;
-  ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_NOCHANGEDIR | (multi ? OFN_ALLOWMULTISELECT : 0);
-  std::vector<fs::path> out;
-  if (!GetOpenFileNameW(&ofn)) return out;
-  // Multi: "carpeta\0fich1\0fich2\0\0"; uno solo: "ruta completa\0\0".
-  const wchar_t* p = buf.data();
-  const fs::path first(p);
-  p += wcslen(p) + 1;
-  if (!*p) {
-    out.push_back(first);
-    return out;
-  }
-  for (; *p; p += wcslen(p) + 1) out.push_back(first / p);
-  return out;
-}
 
 std::string U8(const fs::path& p) { return PathToUtf8(p); }
 
@@ -132,7 +99,9 @@ class SetupUi {
                                  win_);
         obbs = PickObbDialog(win_);
         if (obbs.empty()) {
-          Fail("Sin los archivos .obb no se puede instalar el juego.");
+          Fail(platform::HasFileDialog() ? "Sin los archivos .obb no se puede instalar el juego."
+                                         : "Sin los archivos .obb no se puede instalar el juego.\nCopia main.1501...obb y "
+                                           "patch.15325...obb junto al APK (o usa --obb=<archivo>) y vuelve a intentarlo.");
           return;
         }
       }
@@ -164,6 +133,38 @@ class SetupUi {
     s_.Save();  // escribe todas las claves con sus valores (documenta las opciones al usuario)
   }
 
+  // Campo de texto para escribir o pegar (Ctrl+V) la ruta del APK. Es la unica via cuando no hay dialogo nativo
+  // (Linux sin zenity ni kdialog); en el resto de casos no se muestra. `with_exit`: anadir el boton Salir.
+  void PathField(float w, bool with_exit) {
+    if (platform::HasFileDialog()) return;
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Escribe o pega (Ctrl+V) la ruta completa del APK:");
+    ImGui::SetNextItemWidth(w - 260);
+    const bool entered = ImGui::InputText("##apk_path", path_buf_, sizeof path_buf_, ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    const bool clicked = ImGui::Button("Instalar", ImVec2(120, 0));
+    if (with_exit) {
+      ImGui::SameLine();
+      if (ImGui::Button("Salir", ImVec2(120, 0))) done_ = true;
+    }
+    ImGui::TextDisabled("Instala zenity o kdialog para tener un dialogo de archivos, o usa --install=<apk>.");
+    if (entered || clicked || std::exchange(enter_, false)) {
+      // Quitar espacios y comillas de los extremos (rutas arrastradas desde el gestor de archivos) y expandir ~.
+      std::string p = path_buf_;
+      const auto trim = [](std::string& s) {
+        const char* ws = " \t\r\n'\"";
+        const auto a = s.find_first_not_of(ws);
+        const auto b = s.find_last_not_of(ws);
+        s = a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+      };
+      trim(p);
+      if (p.rfind("file://", 0) == 0) p = p.substr(7);
+      if (!p.empty() && p[0] == '~')
+        if (const char* home = std::getenv("HOME")) p = std::string(home) + p.substr(1);
+      if (!p.empty()) StartInstall(PathFromUtf8(p, fs::current_path()), o_.obbs);
+    }
+  }
+
   void Frame(bool& ok) {
     if (state_ == State::Installing || state_ == State::Error) enter_ = false;
     ImGui_ImplOpenGL3_NewFrame();
@@ -192,12 +193,15 @@ class SetupUi {
         ImGui::Spacing();
         ImGui::TextDisabled("Se extraera en: %s", U8(paths::DefaultGameDir()).c_str());
         ImGui::Spacing();
-        if (ImGui::Button("Elegir APK... (Enter)", ImVec2(260, 0)) || std::exchange(enter_, false)) {
-          const auto apk = PickApkDialog(win_);
-          if (!apk.empty()) StartInstall(apk, o_.obbs);
+        if (platform::HasFileDialog()) {
+          if (ImGui::Button("Elegir APK... (Enter)", ImVec2(260, 0)) || std::exchange(enter_, false)) {
+            const auto apk = PickApkDialog(win_);
+            if (!apk.empty()) StartInstall(apk, o_.obbs);
+          }
+          ImGui::SameLine();
+          if (ImGui::Button("Salir", ImVec2(120, 0))) done_ = true;
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Salir", ImVec2(120, 0))) done_ = true;
+        PathField(w, !platform::HasFileDialog());
         break;
       case State::Installing: {
         const double tot = static_cast<double>(prog_.total.load()), dn = static_cast<double>(prog_.done.load());
@@ -228,14 +232,17 @@ class SetupUi {
         ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "No se pudo instalar:");
         ImGui::TextUnformatted(res_.error.c_str());
         ImGui::Spacing();
-        if (ImGui::Button("Elegir otro APK...", ImVec2(240, 0))) {
-          const auto apk = PickApkDialog(win_);
-          if (!apk.empty()) StartInstall(apk, {});
+        if (platform::HasFileDialog()) {
+          if (ImGui::Button("Elegir otro APK...", ImVec2(240, 0))) {
+            const auto apk = PickApkDialog(win_);
+            if (!apk.empty()) StartInstall(apk, {});
+          }
+          ImGui::SameLine();
         }
-        ImGui::SameLine();
         if (ImGui::Button("Ver logs", ImVec2(140, 0))) paths::OpenFolder(paths::LogsDir());
         ImGui::SameLine();
         if (ImGui::Button("Salir", ImVec2(120, 0))) done_ = true;
+        PathField(w, false);
         break;
     }
     ImGui::PopTextWrapPos();
@@ -262,17 +269,18 @@ class SetupUi {
   installer::Result res_;
   std::thread worker_;
   bool done_ = false, quit_ = false, enter_ = false;
+  char path_buf_[2048] = "";
 };
 
 }  // namespace
 
 fs::path PickApkDialog(SDL_Window* owner) {
-  auto v = OpenDialog(owner, L"Elige el APK de Zombiewood (1.5.3)", L"APK de Android (*.apk)\0*.apk\0Todos los archivos\0*.*\0\0", false);
+  auto v = platform::OpenFileDialog(owner, "Elige el APK de Zombiewood (1.5.3)", "APK de Android", "apk", false);
   return v.empty() ? fs::path() : v.front();
 }
 
 std::vector<fs::path> PickObbDialog(SDL_Window* owner) {
-  return OpenDialog(owner, L"Elige los OBB de Zombiewood (main y patch)", L"OBB (*.obb)\0*.obb\0Todos los archivos\0*.*\0\0", true);
+  return platform::OpenFileDialog(owner, "Elige los OBB de Zombiewood (main y patch)", "OBB", "obb", true);
 }
 
 bool EnsureGameData(SDL_Window* win, Settings& s, const SetupOptions& o) {

@@ -1,3 +1,6 @@
-add_library(zw_core STATIC log.cpp paths.cpp config.cpp)
+add_library(zw_core STATIC log.cpp paths.cpp config.cpp platform.cpp)
 target_include_directories(zw_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(zw_core PUBLIC nlohmann_json::nlohmann_json PRIVATE shell32)
+target_link_libraries(zw_core PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
+if(WIN32)
+  target_link_libraries(zw_core PRIVATE shell32)
+endif()

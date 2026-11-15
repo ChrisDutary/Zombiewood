@@ -6,6 +6,7 @@
 #include "core/config.h"
 #include "core/log.h"
 #include "core/paths.h"
+#include "core/platform.h"
 #include "frontend/game.h"
 
 namespace zw {
@@ -122,7 +123,7 @@ void Settings::ApplyBackendEnv() const {
     return;
   }
   const std::string b = backend.empty() ? "d3d11" : backend;
-  _putenv_s("ANGLE_DEFAULT_PLATFORM", b.c_str());
+  plat::SetEnv("ANGLE_DEFAULT_PLATFORM", b.c_str());
   log::Info("backend: ANGLE {}", b);
 }
 

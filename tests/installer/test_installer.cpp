@@ -3,7 +3,11 @@
 //  - APK pequeno + OBB sueltos junto al APK (FindObbsNear).
 //  - errores: sin OBB principal, CRC corrupto, cancelacion, fichero que no es ZIP.
 //  - SHA-256 conocido y config (SaveConfig/LoadConfig) en un <home> temporal.
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
+#endif
 #include <zlib.h>
 
 #include <cstdio>
@@ -135,12 +139,19 @@ Bytes Apk(bool with_cache, bool bad_crc = false) {
 }
 
 int main() {
-  wchar_t tmpw[MAX_PATH];
-  GetTempPathW(MAX_PATH, tmpw);
-  const fs::path root = fs::path(tmpw) / std::format("zw_test_installer_{}", GetCurrentProcessId());
+#ifdef _WIN32
+  const unsigned long pid = GetCurrentProcessId();
+#else
+  const unsigned long pid = static_cast<unsigned long>(getpid());
+#endif
+  const fs::path root = fs::temp_directory_path() / std::format("zw_test_installer_{}", pid);
   fs::remove_all(root);
   fs::create_directories(root);
+#ifdef _WIN32
   _wputenv_s(L"ZOMBIEWOOD_HOME", (root / "home").c_str());
+#else
+  setenv("ZOMBIEWOOD_HOME", (root / "home").c_str(), 1);
+#endif
   zw::log::Init();
   using namespace zw::installer;
 

@@ -6,11 +6,13 @@
 #include <sstream>
 
 #include "core/log.h"
+#include "frontend/platform.h"
 
 namespace zw {
 
 bool Window::Create(int w, int h, const char* title, bool hidden) {
-  // Pedir a SDL el driver EGL/GLES (ANGLE: libEGL.dll + libGLESv2.dll junto al exe) en vez de WGL.
+  // Pedir a SDL el driver EGL/GLES en vez de WGL/GLX. Windows: ANGLE (libEGL.dll + libGLESv2.dll junto al exe).
+  // Linux: el EGL/GLES del sistema (Mesa o el driver propietario).
   SDL_SetHint(SDL_HINT_OPENGL_ES_DRIVER, "1");
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
   // ES 3.0 si ANGLE lo da (el frontend usa glBlitFramebuffer para escalar); el juego solo usa ES 2.0.
@@ -44,6 +46,7 @@ bool Window::Create(int w, int h, const char* title, bool hidden) {
   }
   SDL_GL_MakeCurrent(window_, ctx_);
   SDL_GL_SetSwapInterval(1);
+  platform::ApplyWindowIcon(window_);  // Linux: icono incrustado; Windows: recurso del exe (no hace nada aqui)
 
   auto s = [](GLenum e) {
     const GLubyte* p = glGetString(e);

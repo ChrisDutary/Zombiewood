@@ -1,10 +1,6 @@
 #include <GLES2/gl2.h>
 #include <SDL.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -18,6 +14,7 @@
 #include "core/paths.h"
 #include "cpu/deps_check.h"
 #include "frontend/game.h"
+#include "frontend/platform.h"
 #include "frontend/window.h"
 #include "hle/audio/audio_hle.h"
 #include "hle/gles/gles.h"
@@ -26,56 +23,8 @@
 #include "imgui.h"
 #include "loader/load_only.h"
 
-#ifdef _WIN32
-#include <dbghelp.h>
-
-// v0.2.2: informe de cierre inesperado. Si el proceso muere por una excepcion no controlada (p. ej. dentro del driver
-// grafico), escribe logs/crash-<fecha>.dmp y una linea en el log con el codigo, la direccion y el modulo culpable.
-// Los fallos del codigo del juego (guest) ya los maneja el runtime; esto cubre el lado host (drivers, DLLs, el port).
-static LONG WINAPI CrashFilter(EXCEPTION_POINTERS* ep) {
-  static volatile LONG once = 0;
-  if (InterlockedExchange(&once, 1)) return EXCEPTION_CONTINUE_SEARCH;
-  const auto* rec = ep->ExceptionRecord;
-  char module[MAX_PATH] = "?";
-  HMODULE hm = nullptr;
-  if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                         static_cast<LPCSTR>(rec->ExceptionAddress), &hm))
-    GetModuleFileNameA(hm, module, MAX_PATH);
-  const uintptr_t off = hm ? reinterpret_cast<uintptr_t>(rec->ExceptionAddress) - reinterpret_cast<uintptr_t>(hm) : 0;
-  SYSTEMTIME st;
-  GetLocalTime(&st);
-  char name[64];
-  wsprintfA(name, "crash-%04d%02d%02d-%02d%02d%02d.dmp", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
-  const auto dmp = zw::paths::Home() / "logs" / name;
-  HANDLE f = CreateFileW(dmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (f != INVALID_HANDLE_VALUE) {
-    MINIDUMP_EXCEPTION_INFORMATION mei{GetCurrentThreadId(), ep, FALSE};
-    MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), f, MiniDumpWithThreadInfo, &mei, nullptr, nullptr);
-    CloseHandle(f);
-  }
-  zw::log::Error("CIERRE INESPERADO: excepcion 0x{:08X} en {}+0x{:X} (direccion {}). Informe: logs/{}", rec->ExceptionCode,
-                 std::filesystem::path(module).filename().string(), off, rec->ExceptionAddress, name);
-  zw::log::Shutdown();
-  return EXCEPTION_CONTINUE_SEARCH;
-}
-#endif
-
 int main(int argc, char** argv) {
-#ifdef _WIN32
-  SetUnhandledExceptionFilter(CrashFilter);
-  // v0.2.2: el exe es una app de ventana (subsistema WINDOWS), asi Windows nunca crea una consola negra al abrirlo con
-  // doble clic (antes era de consola y la soltaba con FreeConsole, pero a veces se veia un instante). Si se lanza desde
-  // un terminal, se engancha a su consola para que la salida de --install/--load-only siga apareciendo ahi.
-  if (AttachConsole(ATTACH_PARENT_PROCESS)) {
-    FILE* f = nullptr;
-    freopen_s(&f, "CONOUT$", "w", stdout);
-    freopen_s(&f, "CONOUT$", "w", stderr);
-  }
-  // Icono de ventana/barra de tareas = recurso 101 del exe (resources/zombiewood.rc), si se incrusto. Debe ir antes de
-  // SDL_Init(VIDEO), que es cuando SDL registra la clase de ventana.
-  SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "101");
-  SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL, "101");
-#endif
+  zw::platform::EarlyInit();  // informe de cierre, consola (Windows), icono; ver frontend/platform.h
   zw::log::Init();
 
   // --load-only <ruta .so> [mas .so...]: diagnostico del loader/CPU (T3), sin ventana ni SDL.

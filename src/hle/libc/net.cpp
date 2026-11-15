@@ -61,8 +61,8 @@ gaddr hle_inet_ntop(int af, GPtr<std::uint8_t> src, GPtr<char> dst, gsize n) {
   return dst.addr;
 }
 int hle_inet_pton(int af, const char* s, GPtr<std::uint32_t> dst) { return af == 2 ? hle_inet_aton(s, dst) : -1; }
-std::uint32_t hle_htonl(std::uint32_t v) { return _byteswap_ulong(v); }
-std::uint32_t hle_htons(std::uint32_t v) { return _byteswap_ushort(static_cast<std::uint16_t>(v)); }
+std::uint32_t hle_htonl(std::uint32_t v) { return (v >> 24) | ((v >> 8) & 0xFF00u) | ((v << 8) & 0xFF0000u) | (v << 24); }
+std::uint32_t hle_htons(std::uint32_t v) { return ((v >> 8) & 0xFFu) | ((v & 0xFFu) << 8); }
 // select/poll sin sockets: solo sirven de temporizador.
 void SleepMs(std::int64_t ms) {
   if (ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(std::min<std::int64_t>(ms, 5000)));

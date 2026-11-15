@@ -9,17 +9,10 @@
 
 #include "core/log.h"
 
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#endif
+#include "frontend/platform.h"
 
 namespace zw::cursor {
 namespace {
-
-constexpr int kResourceId = 102;  // resources/cursor.rc
 
 struct Entry {
   int size = 0, hot_x = 0, hot_y = 0;
@@ -39,15 +32,11 @@ std::uint32_t U32(const std::uint8_t* p) {
 // n x {u32 size, u32 hot_x, u32 hot_y, u32 offset}, pixeles.
 std::vector<Entry> LoadEntries() {
   std::vector<Entry> out;
-#ifdef _WIN32
-  HMODULE mod = GetModuleHandleW(nullptr);
-  HRSRC res = FindResourceW(mod, MAKEINTRESOURCEW(kResourceId), MAKEINTRESOURCEW(10) /*RT_RCDATA*/);
-  if (!res) return out;
-  HGLOBAL h = LoadResource(mod, res);
-  const auto* p = static_cast<const std::uint8_t*>(h ? LockResource(h) : nullptr);
-  const DWORD len = SizeofResource(mod, res);
+  const std::uint8_t* p = nullptr;
+  std::size_t len = 0;
+  if (!platform::EmbeddedCursor(p, len)) return out;
   if (!p || len < 12 || std::memcmp(p, "ZWCU", 4) != 0 || U32(p + 4) != 1) {
-    log::Warn("cursor: recurso {} invalido; se usa el cursor de Windows", kResourceId);
+    log::Warn("cursor: recurso incrustado invalido; se usa el cursor del sistema");
     return out;
   }
   const std::uint32_t n = U32(p + 8);
@@ -60,7 +49,6 @@ std::vector<Entry> LoadEntries() {
     en.pixels = p + off;
     out.push_back(en);
   }
-#endif
   return out;
 }
 

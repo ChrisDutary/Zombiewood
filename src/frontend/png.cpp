@@ -2,6 +2,8 @@
 #include "frontend/png.h"
 
 #include <cstdio>
+
+#include "core/platform.h"
 #include <vector>
 
 namespace zw {
@@ -81,7 +83,7 @@ bool WritePngRgba(const std::filesystem::path& path, const std::uint8_t* rgba, i
   Chunk(out, "IDAT", z);
   Chunk(out, "IEND", {});
 
-  std::FILE* f = _wfopen(path.c_str(), L"wb");
+  std::FILE* f = plat::OpenFile(path, "wb");
   if (!f) return false;
   const bool ok = std::fwrite(out.data(), 1, out.size(), f) == out.size();
   std::fclose(f);

@@ -1,5 +1,9 @@
 // wchar_t de 32 bits (bionic 4.x: conversiones multibyte byte a byte), wcs*/wmem*, wctype.
+#include <algorithm>
+#include <cstdint>
+#include <cstdlib>
 #include <cwctype>
+#include <string>
 #include <cstring>
 
 #include "hle/libc/internal.h"
@@ -187,7 +191,7 @@ int hle_wcstol(const W* s, GPtr<std::uint32_t> end, int base) {
   gsize i = 0;
   for (; s[i] && s[i] < 128; ++i) n += static_cast<char>(s[i]);
   char* e = nullptr;
-  const long r = std::strtol(n.c_str(), &e, base);
+  const long long r = std::clamp<long long>(std::strtoll(n.c_str(), &e, base), INT32_MIN, INT32_MAX);
   if (end) *end = h2g(s + (e - n.c_str()));
   return static_cast<int>(r);
 }
@@ -195,7 +199,10 @@ std::uint32_t hle_wcstoul(const W* s, GPtr<std::uint32_t> end, int base) {
   std::string n;
   for (gsize i = 0; s[i] && s[i] < 128; ++i) n += static_cast<char>(s[i]);
   char* e = nullptr;
-  const unsigned long r = std::strtoul(n.c_str(), &e, base);
+  const bool neg = !n.empty() && n.find('-') != std::string::npos && n.find('-') == n.find_first_not_of(" \t\n\v\f\r");
+  unsigned long long r = std::strtoull(n.c_str(), &e, base);
+  if (neg) r = static_cast<std::uint32_t>(0u - static_cast<std::uint32_t>(0ull - r));
+  else if (r > 0xFFFFFFFFull) r = 0xFFFFFFFFull;
   if (end) *end = h2g(s + (e - n.c_str()));
   return static_cast<std::uint32_t>(r);
 }

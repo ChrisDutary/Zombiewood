@@ -1,7 +1,16 @@
 // VFS: monturas (carpetas host + ZIP superpuestos), ficheros sinteticos, cwd virtual y tabla de fds.
 #include "hle/libc/vfs.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <cstdio>
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -12,6 +21,7 @@
 #include "core/config.h"
 #include "core/log.h"
 #include "core/paths.h"
+#include "core/platform.h"
 #include "hle/libc/libc.h"
 
 namespace zw::hle::libc {
@@ -47,6 +57,58 @@ std::string ToUtf8(const std::filesystem::path& p) {
   const auto u = p.u8string();
   return std::string(reinterpret_cast<const char*>(u.data()), u.size());
 }
+
+// Ruta host de `rel` (relativa, con '/') dentro de la carpeta `base` de una montura.
+// Windows: el sistema de ficheros no distingue mayusculas, basta con concatenar.
+// Linux: el juego mezcla mayusculas ("android"/"Android", "Sound.bar"/"sound.bar"...), asi que cada componente
+// que no exista tal cual se busca sin distinguir mayusculas en su directorio. Lo que no existe (ficheros nuevos)
+// se devuelve con el nombre pedido bajo el ultimo directorio encontrado.
+#ifdef _WIN32
+std::filesystem::path HostJoin(const std::filesystem::path& base, const std::string& rel) {
+  return rel.empty() ? base : base / FromUtf8(rel);
+}
+#else
+std::filesystem::path HostJoin(const std::filesystem::path& base, const std::string& rel) {
+  if (rel.empty()) return base;
+  std::string cur = base.native();
+  struct stat st {};
+  {
+    const std::string exact = cur + "/" + rel;
+    if (::lstat(exact.c_str(), &st) == 0) return std::filesystem::path(exact);
+  }
+  std::size_t i = 0;
+  while (i < rel.size()) {
+    std::size_t j = rel.find('/', i);
+    if (j == std::string::npos) j = rel.size();
+    const std::string comp = rel.substr(i, j - i);
+    i = j + 1;
+    if (comp.empty()) continue;
+    std::string next = cur + "/" + comp;
+    if (::lstat(next.c_str(), &st) != 0) {
+      bool found = false;
+      if (DIR* d = ::opendir(cur.c_str())) {
+        const std::string want = Lower(comp);
+        while (const dirent* de = ::readdir(d)) {
+          if (Lower(de->d_name) == want) {
+            next = cur + "/" + de->d_name;
+            found = true;
+            break;
+          }
+        }
+        ::closedir(d);
+      }
+      if (!found) {
+        // No existe: el resto de la ruta se conserva como la pidio el juego.
+        cur = next;
+        if (i < rel.size()) cur += "/" + rel.substr(i);
+        return std::filesystem::path(cur);
+      }
+    }
+    cur = std::move(next);
+  }
+  return std::filesystem::path(cur);
+}
+#endif
 
 // Busca la montura con el prefijo mas largo que contenga `p` (normalizada). rel = resto sin '/'.
 const Mount* FindMount(const std::string& p, std::string& rel) {
@@ -218,11 +280,9 @@ class DirNode final : public Node {
 };
 
 std::string MemInfo() {
-  MEMORYSTATUSEX ms{sizeof ms};
-  GlobalMemoryStatusEx(&ms);
   // Perfil de memoria del juego: se anuncia como maximo 2 GiB (dispositivo de gama alta de 2014).
-  const unsigned long long total_kb = std::min<unsigned long long>(ms.ullTotalPhys / 1024, 2097152ull);
-  const unsigned long long free_kb = std::min<unsigned long long>(ms.ullAvailPhys / 1024, total_kb / 2);
+  const unsigned long long total_kb = std::min<unsigned long long>(plat::TotalRamBytes() / 1024, 2097152ull);
+  const unsigned long long free_kb = std::min<unsigned long long>(plat::AvailRamBytes() / 1024, total_kb / 2);
   return std::format("MemTotal:       {} kB\nMemFree:        {} kB\nBuffers:            0 kB\nCached:         {} kB\n",
                      total_kb, free_kb, total_kb / 8);
 }
@@ -258,6 +318,7 @@ struct HostStat {
 };
 HostStat StatHost(const std::filesystem::path& hp) {
   HostStat s;
+#ifdef _WIN32
   WIN32_FILE_ATTRIBUTE_DATA d{};
   if (!GetFileAttributesExW(hp.c_str(), GetFileExInfoStandard, &d)) return s;
   s.exists = true;
@@ -265,6 +326,15 @@ HostStat StatHost(const std::filesystem::path& hp) {
   s.read_only = (d.dwFileAttributes & FILE_ATTRIBUTE_READONLY) != 0;
   s.size = (static_cast<std::int64_t>(d.nFileSizeHigh) << 32) | d.nFileSizeLow;
   s.mtime = FileTimeToUnix((static_cast<std::uint64_t>(d.ftLastWriteTime.dwHighDateTime) << 32) | d.ftLastWriteTime.dwLowDateTime);
+#else
+  struct stat st {};
+  if (::stat(hp.c_str(), &st) != 0) return s;
+  s.exists = true;
+  s.is_dir = S_ISDIR(st.st_mode);
+  s.read_only = !s.is_dir && (st.st_mode & S_IWUSR) == 0;
+  s.size = static_cast<std::int64_t>(st.st_size);
+  s.mtime = static_cast<std::int64_t>(st.st_mtime);
+#endif
   return s;
 }
 
@@ -294,7 +364,7 @@ Lookup Find(const std::string& p) {
     return L;
   }
   if (L.m->has_host) {
-    L.host = L.rel.empty() ? L.m->host : L.m->host / FromUtf8(L.rel);
+    L.host = HostJoin(L.m->host, L.rel);
     L.hs = StatHost(L.host);
     if (L.hs.exists) return L;
   }
@@ -559,7 +629,11 @@ int Rmdir(const std::string& path) {
   if (L.hs.exists) {
     if (!L.hs.is_dir) return err::NOTDIR;
     if (L.m->read_only) return err::ROFS;
+#ifdef _WIN32
     if (!RemoveDirectoryW(L.host.c_str())) return HostErrno(GetLastError());
+#else
+    if (::rmdir(L.host.c_str()) != 0) return HostErrno(static_cast<unsigned long>(errno));
+#endif
     return 0;
   }
   if (L.zip_dir || L.is_virtual_dir) return err::ROFS;
@@ -572,7 +646,11 @@ int Unlink(const std::string& path) {
   if (L.hs.exists) {
     if (L.hs.is_dir) return err::ISDIR;
     if (L.m->read_only) return err::ROFS;
+#ifdef _WIN32
     if (!DeleteFileW(L.host.c_str())) return HostErrno(GetLastError());
+#else
+    if (::unlink(L.host.c_str()) != 0) return HostErrno(static_cast<unsigned long>(errno));
+#endif
     return 0;
   }
   if (L.entry) return err::ROFS;
@@ -587,8 +665,19 @@ int Rename(const std::string& from, const std::string& to) {
   if (!A.hs.exists) return A.entry || A.zip_dir ? err::ROFS : err::NOENT;
   if (!B.m || !B.m->has_host) return err::ACCES;
   if (A.m->read_only || B.m->read_only) return err::ROFS;
+#ifdef _WIN32
   if (!MoveFileExW(A.host.c_str(), B.host.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED))
     return HostErrno(GetLastError());
+#else
+  if (std::rename(A.host.c_str(), B.host.c_str()) != 0) {
+    if (errno != EXDEV) return HostErrno(static_cast<unsigned long>(errno));
+    // Monturas en sistemas de ficheros distintos: copiar y borrar (MOVEFILE_COPY_ALLOWED).
+    std::error_code ec;
+    std::filesystem::copy_file(A.host, B.host, std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) return err::IO;
+    ::unlink(A.host.c_str());
+  }
+#endif
   return 0;
 }
 
@@ -686,7 +775,7 @@ std::filesystem::path HostPathFor(const std::string& guest_path) {
   std::string rel;
   const Mount* m = FindMount(Normalize(guest_path), rel);
   if (!m || !m->has_host) return {};
-  return rel.empty() ? m->host : m->host / FromUtf8(rel);
+  return HostJoin(m->host, rel);
 }
 
 void SetCwd(const std::string& guest_dir) {

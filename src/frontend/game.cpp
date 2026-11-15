@@ -27,6 +27,7 @@
 #include "core/config.h"
 #include "core/log.h"
 #include "core/paths.h"
+#include "core/platform.h"
 #include "cpu/cpu.h"
 #include "cpu/hle.h"
 #include "frontend/cursor.h"
@@ -351,7 +352,7 @@ class GlThread {
     if (name.empty()) {
       const auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
       std::tm tm{};
-      localtime_s(&tm, &t);
+      plat::LocalTime(t, tm);
       char buf[64];
       std::strftime(buf, sizeof buf, "zw_%Y%m%d_%H%M%S", &tm);
       name = std::format("{}_{:06}", buf, frame_);

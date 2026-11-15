@@ -1,12 +1,21 @@
-// Ficheros host (Win32, lectura/escritura posicionada thread-safe), lector ZIP de solo lectura
+// Ficheros host (Win32 / POSIX, lectura/escritura posicionada thread-safe), lector ZIP de solo lectura
 // (OBB y .bar) e inflate propio (sin dependencias nuevas).
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <cerrno>
+#endif
 
 #include <algorithm>
 #include <cstring>
 #include <ctime>
 
 #include "core/log.h"
+#include "core/platform.h"
 #include "hle/libc/vfs.h"
 
 namespace zw::hle::libc::vfs {
@@ -17,6 +26,105 @@ std::string Lower(std::string s) {
   return s;
 }
 
+#ifndef _WIN32
+// errno del host (Linux x86_64) -> errno del guest (Linux ARM): los codigos basicos coinciden.
+int HostErrno(unsigned long e) {
+  switch (static_cast<int>(e)) {
+    case ENOENT: return err::NOENT;
+    case ENOTDIR: return err::NOTDIR;
+    case EACCES: case EPERM: return err::ACCES;
+    case EEXIST: return err::EXIST;
+    case ENOSPC: case EDQUOT: return err::NOSPC;
+    case ENOTEMPTY: return err::NOTEMPTY;
+    case ENAMETOOLONG: return err::NAMETOOLONG;
+    case EMFILE: case ENFILE: return err::MFILE;
+    case EROFS: return err::ROFS;
+    case EISDIR: return err::ISDIR;
+    case EINVAL: return err::INVAL;
+    default: return err::IO;
+  }
+}
+
+class HostFile final : public Node {
+ public:
+  explicit HostFile(int fd) : fd_(fd) {}
+  ~HostFile() override { ::close(fd_); }
+  std::int64_t Size() override {
+    struct stat st {};
+    return fstat(fd_, &st) == 0 ? static_cast<std::int64_t>(st.st_size) : 0;
+  }
+  std::int32_t Pread(void* buf, std::uint32_t n, std::int64_t off) override {
+    if (off < 0) return -err::INVAL;
+    std::uint32_t done = 0;
+    while (done < n) {
+      const ssize_t r = ::pread(fd_, static_cast<char*>(buf) + done, n - done, static_cast<off_t>(off + done));
+      if (r < 0) {
+        if (errno == EINTR) continue;
+        return done ? static_cast<std::int32_t>(done) : -HostErrno(static_cast<unsigned long>(errno));
+      }
+      if (r == 0) break;
+      done += static_cast<std::uint32_t>(r);
+    }
+    return static_cast<std::int32_t>(done);
+  }
+  std::int32_t Pwrite(const void* buf, std::uint32_t n, std::int64_t off) override {
+    if (off < 0) return -err::INVAL;
+    std::uint32_t done = 0;
+    while (done < n) {
+      const ssize_t r = ::pwrite(fd_, static_cast<const char*>(buf) + done, n - done, static_cast<off_t>(off + done));
+      if (r < 0) {
+        if (errno == EINTR) continue;
+        return done ? static_cast<std::int32_t>(done) : -HostErrno(static_cast<unsigned long>(errno));
+      }
+      done += static_cast<std::uint32_t>(r);
+    }
+    return static_cast<std::int32_t>(done);
+  }
+  int Truncate(std::int64_t size) override {
+    return ftruncate(fd_, static_cast<off_t>(size)) == 0 ? 0 : -HostErrno(static_cast<unsigned long>(errno));
+  }
+  int Sync() override { return 0; }  // como en Windows (FlushFileBuffers) pero sin forzar fsync en cada close
+  StatInfo Stat() override {
+    StatInfo s;
+    struct stat st {};
+    if (fstat(fd_, &st) == 0) {
+      s.size = static_cast<std::int64_t>(st.st_size);
+      s.mtime = static_cast<std::int64_t>(st.st_mtime);
+      s.ino = static_cast<std::uint64_t>(st.st_ino);
+      s.read_only = (st.st_mode & S_IWUSR) == 0;
+      s.is_dir = S_ISDIR(st.st_mode);
+    }
+    return s;
+  }
+
+ private:
+  int fd_;
+};
+
+std::shared_ptr<Node> OpenHostFile(const std::filesystem::path& p, int flags, int& e) {
+  const int acc = flags & kO_ACCMODE;
+  int of = acc == kO_WRONLY ? O_WRONLY : acc == kO_RDWR ? O_RDWR : O_RDONLY;
+  if (flags & kO_CREAT) of |= O_CREAT;
+  if (flags & kO_EXCL) of |= O_EXCL;
+  if (flags & kO_TRUNC) {
+    of |= O_TRUNC;
+    if (acc == kO_RDONLY) of = (of & ~O_ACCMODE) | O_RDWR;  // como TRUNCATE_EXISTING en Windows
+  }
+  const int fd = ::open(p.c_str(), of | O_CLOEXEC, 0644);
+  if (fd < 0) {
+    e = HostErrno(static_cast<unsigned long>(errno));
+    return nullptr;
+  }
+  struct stat st {};
+  if (fstat(fd, &st) == 0 && S_ISDIR(st.st_mode)) {
+    ::close(fd);
+    e = err::ISDIR;
+    return nullptr;
+  }
+  e = 0;
+  return std::make_shared<HostFile>(fd);
+}
+#else  // _WIN32
 int HostErrno(unsigned long e) {
   switch (e) {
     case ERROR_FILE_NOT_FOUND: case ERROR_PATH_NOT_FOUND: case ERROR_INVALID_NAME: case ERROR_BAD_PATHNAME:
@@ -116,6 +224,7 @@ std::shared_ptr<Node> OpenHostFile(const std::filesystem::path& p, int flags, in
   e = 0;
   return std::make_shared<HostFile>(h);
 }
+#endif  // _WIN32
 
 // ---------------------------------------------------------------------------------------------
 // Inflate (RFC 1951), al estilo de puff.c de zlib.
@@ -352,7 +461,7 @@ std::int64_t DosTime(std::uint16_t t, std::uint16_t d) {
   tm.tm_mday = d & 31;
   tm.tm_mon = ((d >> 5) & 15) - 1;
   tm.tm_year = (d >> 9) + 80;
-  return static_cast<std::int64_t>(_mkgmtime(&tm));
+  return plat::TimeGm(tm);
 }
 }  // namespace
 

@@ -1,6 +1,8 @@
 #include "core/log.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 #include <chrono>
 #include <cstdio>
@@ -96,7 +98,9 @@ void FlushReps(bool all) {
 
 void Init() {
   std::lock_guard lk(g_mu);
+#ifdef _WIN32
   SetConsoleOutputCP(CP_UTF8);
+#endif
   std::error_code ec;
   std::filesystem::create_directories(paths::LogsDir(), ec);
   if (g_file.is_open()) g_file.close();

@@ -21,7 +21,7 @@ struct SetupOptions {
 // instalo algo. Necesita la ventana con su contexto GL actual en este hilo.
 bool EnsureGameData(SDL_Window* win, Settings& s, const SetupOptions& o);
 
-// Dialogos nativos (Windows). Vacio = cancelado.
+// Dialogos nativos (Windows; zenity/kdialog en Linux). Vacio = cancelado o sin dialogo disponible.
 std::filesystem::path PickApkDialog(SDL_Window* owner);
 std::vector<std::filesystem::path> PickObbDialog(SDL_Window* owner);
 

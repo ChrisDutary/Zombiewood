@@ -1,5 +1,6 @@
 // str*, strto*, ato*, strerror, abs/div.
 #include <cerrno>
+#include <cstdint>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
@@ -173,13 +174,37 @@ void SetEnd(GPtr<std::uint32_t> end, const char* p) {
 }
 int hle_strtol(const char* s, GPtr<std::uint32_t> end, int base) {
   char* e = nullptr;
-  const long r = WithErrno([&] { return std::strtol(s, &e, base); });  // long del host (MSVC) = 32 bits
+  // long del guest = 32 bits. En MSVC el long del host tambien; en Linux x86_64 es de 64: saturar como bionic.
+  long long r = WithErrno([&] { return std::strtoll(s, &e, base); });
+  if (r > INT32_MAX) {
+    r = INT32_MAX;
+    SetErrno(err::RANGE);
+  } else if (r < INT32_MIN) {
+    r = INT32_MIN;
+    SetErrno(err::RANGE);
+  }
   SetEnd(end, e);
   return static_cast<int>(r);
 }
 std::uint32_t hle_strtoul(const char* s, GPtr<std::uint32_t> end, int base) {
   char* e = nullptr;
-  const unsigned long r = WithErrno([&] { return std::strtoul(s, &e, base); });
+  const char* q = s;
+  while (*q == ' ' || (*q >= '\t' && *q <= '\r')) ++q;
+  const bool neg = *q == '-';
+  unsigned long long r = WithErrno([&] { return std::strtoull(s, &e, base); });
+  if (neg) {
+    // strtoul("-1") = ULONG_MAX: negacion modulo 2^32 (unsigned long del guest = 32 bits).
+    const unsigned long long mag = 0ull - r;
+    if (mag > 0xFFFFFFFFull) {
+      r = 0xFFFFFFFFull;
+      SetErrno(err::RANGE);
+    } else {
+      r = static_cast<std::uint32_t>(0u - static_cast<std::uint32_t>(mag));
+    }
+  } else if (r > 0xFFFFFFFFull) {
+    r = 0xFFFFFFFFull;
+    SetErrno(err::RANGE);
+  }
   SetEnd(end, e);
   return static_cast<std::uint32_t>(r);
 }

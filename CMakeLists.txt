@@ -14,6 +14,9 @@ include(ZwDependencies)
 if(MSVC)
   add_compile_options(/W3 /utf-8 /permissive- /Zc:__cplusplus)
   add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+else()
+  # Linux (GCC/Clang): el frame pointer se conserva para que el informe de cierre (backtrace) sea util.
+  add_compile_options(-Wall -Wno-unused-function -Wno-unused-variable -Wno-sign-compare -fno-omit-frame-pointer)
 endif()
 
 add_subdirectory(src)

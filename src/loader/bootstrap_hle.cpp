@@ -13,6 +13,7 @@
 #include <string>
 
 #include "core/log.h"
+#include "core/platform.h"
 #include "cpu/cpu.h"
 #include "cpu/hle.h"
 
@@ -35,7 +36,7 @@ char* b_strncpy(char* d, const char* s, gsize n) { return std::strncpy(d, s, n);
 char* b_strcat(char* d, const char* s) { return std::strcat(d, s); }
 int b_strcmp(const char* a, const char* b) { return std::strcmp(a, b); }
 int b_strncmp(const char* a, const char* b, gsize n) { return std::strncmp(a, b, n); }
-int b_strcasecmp(const char* a, const char* b) { return _stricmp(a, b); }
+int b_strcasecmp(const char* a, const char* b) { return plat::StrCaseCmp(a, b); }
 char* b_strchr(char* s, int c) { return std::strchr(s, c); }
 char* b_strrchr(char* s, int c) { return std::strrchr(s, c); }
 char* b_strstr(char* s, const char* n) { return std::strstr(s, n); }

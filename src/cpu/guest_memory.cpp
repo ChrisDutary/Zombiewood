@@ -1,6 +1,13 @@
 #include "cpu/guest_memory.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/mman.h>
+
+#include <cerrno>
+#include <cstring>
+#endif
 
 #include <algorithm>
 #include <bit>
@@ -51,11 +58,46 @@ ZoneAlloc g_zones[4] = {
 
 gsize PageUp(gsize v) { return (v + kPage - 1) & ~(kPage - 1); }
 
+// --- paginas del host --------------------------------------------------------------------------
+// Windows: VirtualAlloc(MEM_RESERVE) + MEM_COMMIT/MEM_DECOMMIT. Linux: mmap(PROT_NONE, MAP_NORESERVE) +
+// mprotect para "comprometer" y madvise(MADV_DONTNEED) + PROT_NONE para liberar (las paginas vuelven a cero).
+#ifdef _WIN32
 DWORD HostProt(Prot p) {
   if (p & kProtWrite) return PAGE_READWRITE;
   if (p & (kProtRead | kProtExec)) return PAGE_READONLY;
   return PAGE_NOACCESS;
 }
+void* HostReserve(std::size_t len) { return VirtualAlloc(nullptr, len, MEM_RESERVE, PAGE_NOACCESS); }
+void* HostAllocRw(std::size_t len) { return VirtualAlloc(nullptr, len, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); }
+bool HostCommitRw(void* p, std::size_t len) { return VirtualAlloc(p, len, MEM_COMMIT, PAGE_READWRITE) != nullptr; }
+bool HostProtect(void* p, std::size_t len, Prot prot) {
+  DWORD old;
+  return VirtualProtect(p, len, HostProt(prot), &old) != 0;
+}
+void HostDecommit(void* p, std::size_t len) { VirtualFree(p, len, MEM_DECOMMIT); }
+unsigned long HostLastError() { return GetLastError(); }
+#else
+int HostProt(Prot p) {
+  if (p & kProtWrite) return PROT_READ | PROT_WRITE;
+  if (p & (kProtRead | kProtExec)) return PROT_READ;
+  return PROT_NONE;
+}
+void* HostReserve(std::size_t len) {
+  void* p = mmap(nullptr, len, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  return p == MAP_FAILED ? nullptr : p;
+}
+void* HostAllocRw(std::size_t len) {
+  void* p = mmap(nullptr, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  return p == MAP_FAILED ? nullptr : p;
+}
+bool HostCommitRw(void* p, std::size_t len) { return mprotect(p, len, PROT_READ | PROT_WRITE) == 0; }
+bool HostProtect(void* p, std::size_t len, Prot prot) { return mprotect(p, len, HostProt(prot)) == 0; }
+void HostDecommit(void* p, std::size_t len) {
+  madvise(p, len, MADV_DONTNEED);
+  mprotect(p, len, PROT_NONE);
+}
+unsigned long HostLastError() { return static_cast<unsigned long>(errno); }
+#endif
 
 bool MapLocked(gaddr addr, gsize size, Prot prot) {
   const gaddr start = addr & ~(kPage - 1);
@@ -64,16 +106,12 @@ bool MapLocked(gaddr addr, gsize size, Prot prot) {
   const std::size_t len = static_cast<std::size_t>(end64 - start);
   bool was_mapped = false;
   for (std::uint64_t a = start; a < end64; a += kPage) was_mapped |= g_page_prot[a >> 12] != 0;
-  void* p = VirtualAlloc(g_membase + start, len, MEM_COMMIT, PAGE_READWRITE);
-  if (!p) {
-    log::Error("GuestMemory::Map: VirtualAlloc(0x{:08x}, 0x{:x}) fallo ({})", start, len, GetLastError());
+  if (!HostCommitRw(g_membase + start, len)) {
+    log::Error("GuestMemory::Map: commit(0x{:08x}, 0x{:x}) fallo ({})", start, len, HostLastError());
     return false;
   }
   if (was_mapped) std::memset(g_membase + start, 0, len);
-  if (HostProt(prot) != PAGE_READWRITE) {
-    DWORD old;
-    VirtualProtect(g_membase + start, len, HostProt(prot), &old);
-  }
+  if (!(prot & kProtWrite)) HostProtect(g_membase + start, len, prot);
   SetPages(start, len, prot);
   return true;
 }
@@ -83,7 +121,7 @@ bool UnmapLocked(gaddr addr, gsize size) {
   const std::uint64_t end64 = (std::uint64_t(addr) + size + kPage - 1) & ~std::uint64_t(kPage - 1);
   if (size == 0 || end64 > kSpace) return false;
   const std::size_t len = static_cast<std::size_t>(end64 - start);
-  VirtualFree(g_membase + start, len, MEM_DECOMMIT);
+  HostDecommit(g_membase + start, len);
   SetPages(start, len, kProtNone);
   return true;
 }
@@ -196,17 +234,15 @@ gaddr LargeAlloc(gsize size, gsize align) {
 bool GuestMemory::Init() {
   std::call_once(g_init_once, [] {
     // +64 KiB de margen para que un acceso que cruce el final de los 4 GiB caiga en zona reservada.
-    void* p = VirtualAlloc(nullptr, kSpace + 0x10000, MEM_RESERVE, PAGE_NOACCESS);
+    void* p = HostReserve(kSpace + 0x10000);
     if (!p) {
-      log::Error("GuestMemory: no se pudieron reservar 4 GiB de espacio de direcciones ({})", GetLastError());
+      log::Error("GuestMemory: no se pudieron reservar 4 GiB de espacio de direcciones ({})", HostLastError());
       return;
     }
     g_membase = static_cast<std::uint8_t*>(p);
-    internal::g_page_prot = static_cast<std::uint8_t*>(
-        VirtualAlloc(nullptr, 1u << 20, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    internal::g_page_prot = static_cast<std::uint8_t*>(HostAllocRw(1u << 20));
     for (auto& z : g_zones) z.free_[z.begin] = z.end - z.begin;
-    internal::g_page_table = static_cast<std::uint8_t**>(
-        VirtualAlloc(nullptr, (1u << 20) * sizeof(std::uint8_t*), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    internal::g_page_table = static_cast<std::uint8_t**>(HostAllocRw((1u << 20) * sizeof(std::uint8_t*)));
     g_init_ok = internal::g_page_prot != nullptr && internal::g_page_table != nullptr;
     log::Debug("GuestMemory: base host = {}", static_cast<void*>(g_membase));
   });
@@ -265,8 +301,7 @@ bool GuestMemory::Protect(gaddr addr, gsize size, Prot prot) {
   if (end64 > kSpace) return false;
   for (std::uint64_t a = start; a < end64; a += kPage)
     if (!g_page_prot[a >> 12] && prot != kProtNone) return false;  // no mapeado
-  DWORD old;
-  if (!VirtualProtect(g_membase + start, static_cast<std::size_t>(end64 - start), HostProt(prot), &old)) return false;
+  if (!HostProtect(g_membase + start, static_cast<std::size_t>(end64 - start), prot)) return false;
   // kProtNone sobre una pagina mapeada la deja como guarda: sigue "reservada" pero inaccesible.
   SetPages(start, static_cast<std::size_t>(end64 - start), prot);
   return true;

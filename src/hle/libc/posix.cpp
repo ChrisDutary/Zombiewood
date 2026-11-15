@@ -1,7 +1,5 @@
 // POSIX de ficheros (open/read/write/lseek/pread/stat/dirs...), entorno, sysconf, ids, cwd.
 // Layouts bionic ARM: struct stat = 104 bytes, struct dirent = 280 bytes (d_name @19).
-#include <windows.h>
-
 #include <algorithm>
 #include <cstring>
 #include <map>

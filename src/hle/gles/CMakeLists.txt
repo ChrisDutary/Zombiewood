@@ -1,14 +1,15 @@
 # zw_hle_gles: 99 imports gl* de libGLESv2 -> ANGLE (T5).
 add_library(zw_hle_gles STATIC gles.cpp texdecode.cpp)
 target_link_libraries(zw_hle_gles PUBLIC zw_core zw_cpu
-                                  PRIVATE unofficial::angle::libGLESv2 unofficial::angle::libEGL)
+                                  PRIVATE zw_gles zw_egl)
 target_include_directories(zw_hle_gles PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
 # Tests de T5 (fuentes en tests/hle_gles/): contexto ANGLE pbuffer offscreen.
 if(BUILD_TESTING)
   set(_zw_tgles ${CMAKE_SOURCE_DIR}/tests/hle_gles)
   add_executable(zw_test_gles ${_zw_tgles}/test_gles.cpp)
-  target_link_libraries(zw_test_gles PRIVATE zw_hle_gles unofficial::angle::libGLESv2 unofficial::angle::libEGL)
+  target_link_libraries(zw_test_gles PRIVATE zw_hle_gles zw_gles zw_egl)
+  if(WIN32)
   # ANGLE: copiar libEGL/libGLESv2 (+ z.dll) junto al test.
   set(_dlls "")
   foreach(_t libEGL libGLESv2)
@@ -27,5 +28,6 @@ if(BUILD_TESTING)
   endif()
   add_custom_command(TARGET zw_test_gles POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_dlls} "$<TARGET_FILE_DIR:zw_test_gles>")
+  endif()
   add_test(NAME hle_gles COMMAND zw_test_gles)
 endif()

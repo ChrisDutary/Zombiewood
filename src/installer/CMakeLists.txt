@@ -1,8 +1,8 @@
 # Instalador de datos (T9): extrae libZombieWood.so, OBB y recursos del APK del usuario.
 find_package(ZLIB REQUIRED)  # zlib: declarado en vcpkg.json
-add_library(zw_installer STATIC installer.cpp)
+add_library(zw_installer STATIC installer.cpp sha256.cpp)
 target_include_directories(zw_installer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(zw_installer PUBLIC zw_core PRIVATE ZLIB::ZLIB bcrypt)
+target_link_libraries(zw_installer PUBLIC zw_core PRIVATE ZLIB::ZLIB)
 
 if(BUILD_TESTING)
   add_executable(zw_test_installer ${PROJECT_SOURCE_DIR}/tests/installer/test_installer.cpp)
@@ -15,7 +15,7 @@ if(BUILD_TESTING)
   endif()
   get_filename_component(_zlib_bin "${_zlib_loc}" DIRECTORY)
   file(GLOB _zlib_dlls "${_zlib_bin}/../bin/z*.dll")
-  if(_zlib_dlls)
+  if(WIN32 AND _zlib_dlls)
     add_custom_command(TARGET zw_test_installer POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_zlib_dlls} $<TARGET_FILE_DIR:zw_test_installer>)
   endif()

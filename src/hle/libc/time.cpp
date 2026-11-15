@@ -1,6 +1,5 @@
 // Tiempo con tipos de 32 bits de bionic: time_t/clock_t = int32, timeval/timespec = 8 bytes,
 // struct tm = 44 bytes (9 int + long tm_gmtoff + const char* tm_zone). Sueno: usleep/sleep/nanosleep.
-#include <windows.h>
 
 #include <chrono>
 #include <cstring>
@@ -8,6 +7,7 @@
 #include <string>
 #include <thread>
 
+#include "core/platform.h"
 #include "hle/libc/internal.h"
 
 namespace zw::hle::libc {
@@ -45,17 +45,15 @@ std::tm ToHost(const GTm& g) {
 
 bool GmTime(std::int64_t t, GTm& out) {
   std::tm h{};
-  const __time64_t tt = t;
-  if (_gmtime64_s(&h, &tt)) return false;
+  if (!plat::GmTime(t, h)) return false;
   out = FromHost(h, 0, InternString("GMT"));
   return true;
 }
 bool LocalTime(std::int64_t t, GTm& out) {
   std::tm h{};
-  const __time64_t tt = t;
-  if (_localtime64_s(&h, &tt)) return false;
+  if (!plat::LocalTime(t, h)) return false;
   std::tm copy = h;
-  const std::int64_t as_utc = _mkgmtime64(&copy);
+  const std::int64_t as_utc = plat::TimeGm(copy);
   const auto off = static_cast<std::int32_t>(as_utc - t);
   std::string zone = "GMT";
   if (off) zone = std::format("GMT{}{:02}:{:02}", off < 0 ? '-' : '+', std::abs(off) / 3600, (std::abs(off) / 60) % 60);
@@ -136,7 +134,7 @@ gaddr hle_localtime(GPtr<std::int32_t> t) { return hle_localtime_r(t, TmBuf()); 
 int hle_mktime(gaddr tmp) {
   GTm g = mem::Read<GTm>(tmp);
   std::tm h = ToHost(g);
-  const __time64_t r = _mktime64(&h);
+  const std::int64_t r = static_cast<std::int64_t>(std::mktime(&h));
   if (r == -1) return -1;
   GTm out;
   LocalTime(r, out);
@@ -146,7 +144,7 @@ int hle_mktime(gaddr tmp) {
 int hle_timegm(gaddr tmp) {
   GTm g = mem::Read<GTm>(tmp);
   std::tm h = ToHost(g);
-  const __time64_t r = _mkgmtime64(&h);
+  const std::int64_t r = plat::TimeGm(h);
   if (r == -1) return -1;
   GTm out;
   GmTime(r, out);
@@ -235,7 +233,7 @@ std::string Strftime(const char* fmt, gaddr tmp) {
       case 'R': out += std::format("{:02}:{:02}", t.hour, t.min); break;
       case 's': {
         std::tm h = ToHost(t);
-        out += std::to_string(static_cast<long long>(_mktime64(&h)));
+        out += std::to_string(static_cast<long long>(std::mktime(&h)));
         break;
       }
       case 'S': out += std::format("{:02}", t.sec); break;
@@ -275,11 +273,11 @@ gsize hle_strftime(GPtr<char> dst, gsize n, const char* fmt, gaddr tmp) {
 const char* MatchName(const char* s, const char* const* names, int count, int& idx) {
   for (int i = 0; i < count; ++i) {
     const std::size_t full = std::strlen(names[i]);
-    if (!_strnicmp(s, names[i], full)) {
+    if (!plat::StrNCaseCmp(s, names[i], full)) {
       idx = i;
       return s + full;
     }
-    if (!_strnicmp(s, names[i], 3)) {
+    if (!plat::StrNCaseCmp(s, names[i], 3)) {
       idx = i;
       return s + 3;
     }
@@ -320,7 +318,7 @@ gaddr hle_strptime(GPtr<char> sp, const char* fmt, gaddr tmp) {
       case 'j': if ((s = Num(s, 3, v))) t.yday = v - 1; break;
       case 'y': if ((s = Num(s, 2, v))) t.year = v < 69 ? v + 100 : v; break;
       case 'Y': if ((s = Num(s, 4, v))) t.year = v - 1900; break;
-      case 'p': if (!_strnicmp(s, "PM", 2)) { if (t.hour < 12) t.hour += 12; s += 2; } else if (!_strnicmp(s, "AM", 2)) { if (t.hour == 12) t.hour = 0; s += 2; } else s = nullptr; break;
+      case 'p': if (!plat::StrNCaseCmp(s, "PM", 2)) { if (t.hour < 12) t.hour += 12; s += 2; } else if (!plat::StrNCaseCmp(s, "AM", 2)) { if (t.hour == 12) t.hour = 0; s += 2; } else s = nullptr; break;
       case 'Z': while ((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z')) ++s; break;
       case 'z': if (*s == '+' || *s == '-') ++s; while (*s >= '0' && *s <= '9') ++s; break;
       case 'T': if ((s = Num(s, 2, t.hour)) && *s == ':' && (s = Num(s + 1, 2, t.min)) && *s == ':') s = Num(s + 1, 2, t.sec); else s = nullptr; break;

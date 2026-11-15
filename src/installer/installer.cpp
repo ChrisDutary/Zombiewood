@@ -1,7 +1,5 @@
 #include "installer/installer.h"
 
-#include <windows.h>
-#include <bcrypt.h>
 #include <zlib.h>
 
 #include <algorithm>
@@ -17,6 +15,8 @@
 #include <nlohmann/json.hpp>
 
 #include "core/log.h"
+#include "core/platform.h"
+#include "installer/sha256.h"
 
 namespace zw::installer {
 namespace fs = std::filesystem;
@@ -40,43 +40,13 @@ std::string Lower(std::string s) {
   return s;
 }
 
-// ------------------------------------------------------------------------------------- SHA-256
-class Sha256 {
- public:
-  Sha256() {
-    if (BCryptOpenAlgorithmProvider(&alg_, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0 ||
-        BCryptCreateHash(alg_, &h_, nullptr, 0, nullptr, 0, 0) < 0)
-      throw std::runtime_error("BCrypt SHA-256 no disponible");
-  }
-  ~Sha256() {
-    if (h_) BCryptDestroyHash(h_);
-    if (alg_) BCryptCloseAlgorithmProvider(alg_, 0);
-  }
-  Sha256(const Sha256&) = delete;
-  Sha256& operator=(const Sha256&) = delete;
-  void Update(const void* p, std::size_t n) {
-    BCryptHashData(h_, static_cast<PUCHAR>(const_cast<void*>(p)), static_cast<ULONG>(n), 0);
-  }
-  std::string HexDigest() {
-    unsigned char d[32];
-    BCryptFinishHash(h_, d, sizeof d, 0);
-    std::string s;
-    for (unsigned char c : d) s += std::format("{:02x}", c);
-    return s;
-  }
-
- private:
-  BCRYPT_ALG_HANDLE alg_ = nullptr;
-  BCRYPT_HASH_HANDLE h_ = nullptr;
-};
-
 // ------------------------------------------------------------------------------------- ficheros
 class InFile {
  public:
-  explicit InFile(const fs::path& p) : f_(_wfopen(p.c_str(), L"rb")) {
+  explicit InFile(const fs::path& p) : f_(plat::OpenFile(p, "rb")) {
     if (!f_) throw std::runtime_error("no se puede abrir " + U8(p));
-    _fseeki64(f_, 0, SEEK_END);
-    size_ = static_cast<std::uint64_t>(_ftelli64(f_));
+    plat::Seek64(f_, 0, SEEK_END);
+    size_ = static_cast<std::uint64_t>(plat::Tell64(f_));
   }
   ~InFile() {
     if (f_) std::fclose(f_);
@@ -85,7 +55,7 @@ class InFile {
   InFile& operator=(const InFile&) = delete;
   std::uint64_t size() const { return size_; }
   void ReadAt(std::uint64_t off, void* dst, std::size_t n) {
-    if (_fseeki64(f_, static_cast<long long>(off), SEEK_SET) != 0 || std::fread(dst, 1, n, f_) != n)
+    if (plat::Seek64(f_, static_cast<std::int64_t>(off), SEEK_SET) != 0 || std::fread(dst, 1, n, f_) != n)
       throw std::runtime_error("lectura fuera del fichero (ZIP danado?)");
   }
 
@@ -278,7 +248,7 @@ class OutFile {
   OutFile(const fs::path& final_path) : final_(final_path), part_(final_path) {
     part_ += ".part";
     fs::create_directories(final_.parent_path());
-    f_ = _wfopen(part_.c_str(), L"wb");
+    f_ = plat::OpenFile(part_, "wb");
     if (!f_) throw std::runtime_error("no se puede escribir " + U8(part_));
   }
   ~OutFile() {
