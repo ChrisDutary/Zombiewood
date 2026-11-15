@@ -72,6 +72,37 @@ B1 fix.
 - Contents: `zombiewood.exe` (6.3 MiB), `SDL2.dll`, `libEGL.dll`, `libGLESv2.dll`, `z.dll`, `gamecontrollerdb.txt`,
   `readme.txt`, `README.md`, `licenses/` (7 files). No game data.
 
+## Linux x86_64 (feature/linux branch, 2026-11-15)
+
+Machine: the same PC under **WSL2** (Ubuntu 24.04.4, WSLg), Mesa 25.2.8, GCC 13. Two renderers were exercised: Mesa's
+**D3D12** driver on the NVIDIA RTX 3060 Laptop (`GALLIUM_DRIVER=d3d12`) and **llvmpipe** (software; WSLg's default).
+Game data: the owner's full 1.5.3 APK (306 MB). Screenshots and the run log were copied to `ZombiewoodDev\qa-linux\`.
+Everything below was run for real; what was not exercised is marked **NOT TESTED**.
+
+| # | Test | Result | Evidence / notes |
+|---|---|---|---|
+| L1 | Configure + build, `linux-release` preset (distro packages, no ANGLE) | ✅ OK | 0 errors; dynarmic at the pinned commit, shadow-space patch skipped (`dynarmic: sin parche de shadow space (solo Windows)`) |
+| L2 | `ctest` on Linux | ✅ 8/8 | `loader`, `cpu` (fastmem via SIGSEGV), `hle_libc` (164 checks, incl. the new case-insensitive VFS ones), `hle_gles` (EGL pbuffer), `hle_audio`, `jni`, `installer`, `core_and_cpu_deps` |
+| L3 | Windows still builds and passes `ctest` after the port | ✅ 8/8 | separate build dir `win-release-linuxcheck` (deleted afterwards) |
+| L4 | Installer from the APK: `--install=<apk> --install-only` | ✅ OK | 13 files in **3.5–4.3 s**; SHA-256 of `libZombieWood.so` = `2855ed9f…fa967c` (1.5.3) and both OBBs verified with the portable SHA-256, 0 warnings; `data/` = 311 MB |
+| L5 | First run without a save, `--frames=1800 --shot-every=300` | ✅ OK | reaches the tutorial ("SHOOT THOSE PROPS!"); image correct (`auto_001800.png`); exit code 0. `.init_array` 195–300 ms |
+| L6 | Save from Windows copied into `saves/`, `--frames=1800 --shot-every=300` | ✅ OK | loads it and reaches the **movie menu** (555 coins, 3 %, `menu_001800.png`); saves are compatible; backups written to `saves_backup/` |
+| L7 | Frame rate | ✅ 60 fps (GPU) | D3D12 + X11: **60.0 fps** in the movie menu (step 3.1 ms) and 59.9–60.2 in the tutorial (step 5.0–6.4 ms), like Windows. llvmpipe: 11–14 fps (software rendering, expected). WSLg's Wayland backend (`SDL_VIDEODRIVER=wayland`) presented at only ~21 fps in the menu: X11, SDL's default, is the one to use there |
+| L8 | Mixed-case paths against the real OBBs / `.bar` files | ✅ OK | the game boots and loads all its data on a case-sensitive file system (ext4); unit checks open/stat/create/unlink/rmdir with different case (`tests/hle_libc`) |
+| L9 | Audio | ⚠️ Partial | SDL device opened (`audio: pista 44100 Hz, 2 canales, PCM16 -> dispositivo SDL`, PulseAudio of WSLg), steady 171–174 KB/s, 0–1 dropouts while loading. **Not verified by ear** |
+| L10 | Videos | ✅ skipped as designed | `video: logo_hd.mp4 saltado (sin reproductor en Linux)`, same for the intro; the game continues |
+| L11 | Wizard without `zenity`/`kdialog` (typed path) | ✅ OK | fresh `<home>`, `PATH` without the tools: path typed into the text field with `xdotool`, Enter → installed (313 MB) → Enter → game loop ran 300 frames, exit 0 |
+| L12 | `zenity` file dialog | ⚠️ **NOT TESTED** by hand | the code path (fork/exec, output parsing) is compiled and `zenity` is detected; nobody clicked through the dialog |
+| L13 | Crash report | ✅ OK | `SIGABRT` sent to a running instance → `logs/crash-<date>.txt` (signal, registers, backtrace with `main`, `/proc/self/maps`) and `CIERRE INESPERADO: SIGABRT en libc.so.6+0x98E31 … Informe: logs/crash-….txt` in the log; exit status 134 |
+| L14 | Icon and cursor embedded from `resources/` | ✅ built / ⚠️ not seen | `zw_embed: cursor si (66636 bytes), icono si (128 px ventana…)`, log `cursor: zombi 48px (hotspot 1,0)`; **not confirmed by eye** |
+| L15 | Gamepad | ⚠️ **NOT TESTED** | the controller code (SDL GameController, HIDAPI hints, mapping wizard) is compiled unchanged and `gamecontrollerdb.txt` (749 Linux mappings) is loaded through `SDL_HINT_GAMECONTROLLERCONFIG_FILE`; no controller is visible inside WSL |
+| L16 | AppImage | ✅ OK | launches in WSLg (`--appimage-extract-and-run` not needed with libfuse2), `<home>` = `$XDG_DATA_HOME/zombiewood`, installed the APK and ran 900 frames at 60 fps; bundles SDL2 + deps, **no** `libGLESv2`/`libEGL` (checked by the script; `ldd` resolves them to the system's) |
+| L17 | tar.gz | ✅ OK | extracted to an empty folder: starts, `<home>` = the extracted folder, `libSDL2` resolved from `lib/` (RUNPATH `$ORIGIN/lib`) |
+
+Not tested on Linux: a native (non-WSL) desktop, Mesa Intel/AMD and the proprietary NVIDIA driver, Wayland on a real
+compositor, Steam Deck, physical gamepads, audio by ear, the `linux-debug` preset beyond configuration, distributions
+other than Ubuntu 24.04, and long play sessions (the longest run was 1800 frames).
+
 ## v0.2.0 — zombie cursor (2026-11-13)
 
 | Test | Result | Evidence / notes |

@@ -1,4 +1,9 @@
-# Building Zombiewood from scratch (Windows x64)
+# Building Zombiewood from scratch
+
+Windows x64 is described first; the Linux x86_64 build has [its own section](#linux-x86_64) below. The game data,
+`<home>` layout, `zombiewood.json`, menu, controls and command line are the same on both systems.
+
+# Windows x64
 
 ## Requirements
 
@@ -162,6 +167,87 @@ lines appended to the file are executed as they arrive), `--load-only <so>` (loa
 - The post-build step copies `libEGL.dll`, `libGLESv2.dll` (ANGLE) and `z.dll` next to the exe. The context is
   requested as ES 3.0 (the game uses ES 2.0; the frontend needs `glBlitFramebuffer` to scale the internal framebuffer).
 
+## Linux x86_64
+
+End-user documentation (requirements, AppImage, data folder, known limits) is in [`LINUX.md`](LINUX.md). This section
+is about building.
+
+### Requirements
+
+- A recent x86_64 distribution with **GCC 13+** (or Clang 17+ with a libstdc++/libc++ that has `<format>`), **CMake
+  3.25+**, **Ninja** and **git**. Developed and tested on Ubuntu 24.04 (also inside WSL2).
+- Dependencies come from **distribution packages** (no vcpkg on Linux): SDL2, zlib, nlohmann-json, Boost headers and
+  the OpenGL ES / EGL development files. Dear ImGui and dynarmic are fetched by CMake exactly as on Windows (same pinned
+  tag/commit); the Windows-only *shadow space* patch to dynarmic is not applied. **There is no ANGLE on Linux**: the
+  context is created by SDL on the system's EGL/GLES (`SDL_GL_CONTEXT_PROFILE_ES`, ES 3.0 with a 2.0 fallback).
+
+```sh
+# Debian / Ubuntu
+sudo apt install build-essential cmake ninja-build pkg-config git \
+     libsdl2-dev zlib1g-dev nlohmann-json3-dev libboost-dev libgles-dev libegl-dev
+# optional at run time: zenity (file dialog); for packaging: curl file
+```
+
+Other distributions: the equivalents of those packages (Fedora: `gcc-c++ cmake ninja-build SDL2-devel zlib-devel
+json-devel boost-devel mesa-libGLES-devel mesa-libEGL-devel`; Arch: `base-devel cmake ninja sdl2 zlib nlohmann-json
+boost mesa`). These two lists have not been tested.
+
+### Building
+
+```sh
+cmake --preset linux-release      # or linux-debug
+cmake --build --preset linux-release
+ctest --preset linux-release      # the same 8 tests as on Windows
+```
+
+The build directory is `$HOME/zw/build/<preset>` (outside the repository; under WSL keep it on the Linux file system,
+not under `/mnt/c`). All 8 tests run on Linux: `loader`, `cpu` (fastmem through dynarmic's `SIGSEGV` handler),
+`hle_libc` (includes the case-insensitive VFS checks), `hle_gles` (needs a working EGL: a pbuffer context on the default
+display; Mesa's llvmpipe is enough), `hle_audio`, `jni`, `installer`, `core_and_cpu_deps`.
+
+Run it from the build tree with `$HOME/zw/build/linux-release/src/frontend/zombiewood`. A build tree is writable, so
+`<home>` is the folder of the binary (portable mode); set `ZOMBIEWOOD_HOME` to keep your data elsewhere. See
+[`LINUX.md`](LINUX.md#where-the-data-lives-home) for how `<home>` is chosen (AppImage → `~/.local/share/zombiewood`).
+
+Under **WSL2** the default renderer is llvmpipe (software, ~12 fps). Use the GPU with
+`GALLIUM_DRIVER=d3d12 ./zombiewood` (60 fps on the development machine; X11 is the default and the smoothest there).
+
+### Optional icon and cursor
+
+The same optional, unversioned files as on Windows: `resources/zombiewood.ico` and `resources/zombiewood_cursor.bin`.
+If they exist at configure time, the build tool `tools/embed/zw_embed.cpp` turns them into data compiled into the
+binary (window icon on X11, zombie cursor) and writes `src/frontend/zombiewood.png` in the build tree, which the
+packaging script uses as the AppImage icon. Without them: system cursor, no window icon and a generic package icon.
+
+### Packaging
+
+```sh
+tools/package-linux.sh --clean        # configure + build + ctest + AppImage + tar.gz
+tools/package-linux.sh --skip-build   # only repackage what is already in the build directory
+```
+
+Output (by default in `$HOME/zw/dist/`): `Zombiewood-Linux-x86_64-<version>.AppImage` and
+`Zombiewood-Linux-x86_64-<version>.tar.gz`, each with a `.sha256`, plus the staging folders `AppDir/` and
+`Zombiewood-Linux-x86_64/`. Options: `--dist-dir`, `--build-dir`, `--clean`, `--skip-build`, `--skip-tests`.
+
+- The AppImage is built with [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy) (downloaded once into
+  `<dist>/tools/`). It bundles SDL2 and its dependencies (PulseAudio client, libdecor, xkbcommon, X11 extension
+  libraries…) and **excludes** `libGLESv2`/`libEGL`/`libGLdispatch`, glibc and the base X11/Wayland libraries, which must
+  be the host's. The script fails if a GL/EGL or libc library ends up in the bundle.
+- Release binaries link libstdc++/libgcc statically (`-DZW_STATIC_CXX_RUNTIME=ON`), so they only need glibc
+  (2.38 or newer when built on Ubuntu 24.04).
+- Same rules as `package.ps1`: the script fails if a package contains `*.apk/.obb/.mp4/.bar/.dex`, the game's `.so`
+  files or any `.so` outside the bundled `lib/` folder, and it refuses to wipe a staging folder that contains `data/`,
+  `saves/` or `zombiewood.json`. Both packages include `readme.txt` (`tools/package/readme-linux.txt`), `README.md`,
+  `LINUX.md`, `LICENSE.txt`, `licenses/` and `gamecontrollerdb.txt` (Linux entries, `tools/package/gamecontrollerdb-linux.txt`).
+
+### Platform differences in the code
+
+See the table at the end of [`LINUX.md`](LINUX.md#how-the-linux-port-differs-internally). In short: platform code lives
+in `src/core/platform.*`, `src/core/paths.cpp`, `src/frontend/platform_{win,linux}.cpp`, `src/frontend/video_linux.cpp`
+and a few `#ifdef _WIN32` blocks (`cpu/guest_memory.cpp`, `cpu/cpu.cpp`, `hle/libc/vfs.cpp`, `hle/libc/zip.cpp`). CMake
+exposes GLES as the `zw_gles`/`zw_egl` targets (ANGLE on Windows, system libraries on Linux).
+
 ## Packaging the release (T10)
 
 ```powershell
@@ -183,7 +269,7 @@ When opened with a double click, the exe detaches its console (no black window);
 
 ## Target layout
 
-`zw_core` (log/config/paths), `zw_installer` (T9: APK → data, zlib + BCrypt), `zw_loader`, `zw_cpu` (+ `zw_cpu_deps` =
+`zw_core` (log/config/paths/platform), `zw_installer` (T9: APK → data, zlib + a built-in SHA-256), `zw_loader`, `zw_cpu` (+ `zw_cpu_deps` =
 dynarmic), `zw_hle_libc`, `zw_hle_gles`, `zw_hle_audio`, `zw_jni`, `zw_frontend` (SDL2 window + GLES context, startup,
 GL thread, input; T9: wizard, ImGui menu, Media Foundation videos, save backups; 0.2.0: cursor) and the `zombiewood`
 executable. `ctest`: 8 tests, including `installer` (synthetic APKs, does not need the game data). zlib comes from

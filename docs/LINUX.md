@@ -89,7 +89,8 @@ which only works by accident on Windows and Android's FAT SD cards), so you can 
 - **Window icon on Wayland**: SDL2 cannot set it there; the desktop uses the icon of the AppImage's `.desktop` entry
   when the AppImage is integrated (AppImageLauncher, Gear Lever…). On X11 the icon is set by the game.
 - **Steam Deck / SteamOS: untested.** SteamOS 3.6+ should satisfy the glibc requirement; older versions will not.
-- **Tested only under WSL2 (WSLg)** on Ubuntu 24.04 with an NVIDIA RTX 3060 (Mesa D3D12 driver) and with llvmpipe.
+- **Tested only under WSL2 (WSLg)** on Ubuntu 24.04 with an NVIDIA RTX 3060 (Mesa D3D12 driver) and with llvmpipe. See the
+  Linux section of [`QA.md`](QA.md).
   Native Mesa (Intel/AMD), the proprietary NVIDIA driver, physical gamepads and audio by ear have not been tested.
 - The `--install-only` wizard keeps its error screen open if the APK is invalid (same as on Windows); close the window.
 
@@ -99,7 +100,7 @@ which only works by accident on Windows and Android's FAT SD cards), so you can 
 |---|---|
 | `GLIBC_2.38 not found` | Your distribution is too old for the release binaries; build from source ([`BUILD.md`](BUILD.md)). |
 | `dlopen(): error loading libfuse.so.2` | Install FUSE 2 or run with `--appimage-extract-and-run`. |
-| Very low FPS, `GL_RENDERER : llvmpipe` in the log | Software rendering: install/enable your GPU's Mesa or vendor driver. Under **WSL2** run with `GALLIUM_DRIVER=d3d12` (WSLg picks llvmpipe by default); add `SDL_VIDEODRIVER=wayland` to avoid the `Failed to attach to x11 shm` messages. |
+| Very low FPS, `GL_RENDERER : llvmpipe` in the log | Software rendering: install/enable your GPU's Mesa or vendor driver. Under **WSL2** run with `GALLIUM_DRIVER=d3d12` (WSLg picks llvmpipe by default) and keep SDL's default X11 backend: the `Failed to attach to x11 shm` messages on stderr are harmless, while WSLg's Wayland backend was seen presenting at only ~20 fps. |
 | No window / `Could not initialize EGL` | Check that `libEGL.so.1` and `libGLESv2.so.2` exist (`libegl1`, `libgles2` on Debian/Ubuntu; `mesa-libEGL`, `mesa-libGLES` on Fedora). Try the other display server: `SDL_VIDEODRIVER=x11` or `wayland`. |
 | No sound | `SDL_AUDIODRIVER=pulseaudio` (or `pipewire`, `alsa`); check that another app can play audio. |
 | The file dialog does not open | Install `zenity` or `kdialog`, paste the path in the text field, or use `--install=<apk>`. |

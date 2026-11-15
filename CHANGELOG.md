@@ -1,4 +1,4 @@
-# Changelog — Zombiewood for Windows
+# Changelog — Zombiewood for Windows and Linux
 
 Every improvement and change to the port is documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
@@ -10,7 +10,27 @@ Each version is published as a release on [GitHub](https://github.com/ChrisDutar
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- **Linux x86_64 build (AppImage + tar.gz)**: the same runtime (ELF loader + dynarmic JIT + Android HLE) built natively
+  for Linux. Published as `Zombiewood-Linux-x86_64-<version>.AppImage` (data in `~/.local/share/zombiewood`) and
+  `Zombiewood-Linux-x86_64-<version>.tar.gz` (portable folder), each with a `.sha256`. It uses the system's OpenGL ES /
+  EGL (Mesa or the vendor driver) instead of ANGLE and bundles SDL2. Needs glibc 2.38+. See
+  [`docs/LINUX.md`](docs/LINUX.md).
+- Linux: first-run wizard with a `zenity`/`kdialog` file dialog, or a text field to type/paste the APK path when
+  neither is installed; `--install=<apk>` works as on Windows.
+- Linux: case-insensitive lookup of the game's files (the game mixes `android/Android` etc.), crash report
+  `logs/crash-<date>.txt` with a backtrace, window icon and zombie cursor embedded from the same optional art files.
+- `linux-release` / `linux-debug` CMake presets (GCC/Clang + Ninja, distribution packages) and
+  `tools/package-linux.sh`.
+
+### Changed
+- The installer verifies SHA-256 with a built-in implementation instead of Windows BCrypt (same results).
+- Platform-specific code was isolated (`src/core/platform.*`, `src/frontend/platform_win.cpp` /
+  `platform_linux.cpp`); the Windows behavior is unchanged.
+
+### Known limits (Linux)
+- Videos (logo, intro, "movie complete") are not played yet: they are skipped.
+- Tested only under WSL2 (Ubuntu 24.04); Steam Deck, native Mesa/NVIDIA drivers and physical gamepads are untested.
 
 ## [0.2.2] — 2026-11-15
 

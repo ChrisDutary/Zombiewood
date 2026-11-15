@@ -1,12 +1,13 @@
-# Zombiewood for Windows (native port)
+# Zombiewood for Windows and Linux (native port)
 
 **English** · [Español](README.es.md)
 
-A runtime that lets you play **Zombiewood 1.5.3** (an Android game by Gameloft) natively on Windows 10/11 x64. This
-project is **only the execution environment**. It loads the game's own native library (`libZombieWood.so`, 32-bit ARM)
+A runtime that lets you play **Zombiewood 1.5.3** (an Android game by Gameloft) natively on Windows 10/11 x64 and on
+Linux x86_64. This project is **only the execution environment**. It loads the game's own native library (`libZombieWood.so`, 32-bit ARM)
 with a custom ELF loader, runs it through a JIT recompiler (dynarmic) and replaces Android with Windows: bionic
 libc/pthread, OpenGL ES 2 (ANGLE on Direct3D 11), audio (SDL2), JNI, video (Media Foundation) and input (keyboard,
-mouse, gamepad → virtual touches on the HUD).
+mouse, gamepad → virtual touches on the HUD). The Linux build is the same runtime with the system's OpenGL ES (Mesa) instead
+of ANGLE and no video playback yet; see [`docs/LINUX.md`](docs/LINUX.md).
 
 > ## ⚠️ The game is not included
 > This repository and the download package **contain no Zombiewood data at all** (no code, graphics, sound or videos).
@@ -20,7 +21,22 @@ Offline only: Gameloft's servers no longer exist, so the online store, TapJoy, e
 
 > The in-game port menu (F1) is currently in Spanish; menu names are given below as *Spanish (English)*.
 
+## Downloads
+
+From the repository's **Releases** section ([latest version](https://github.com/ChrisDutary/Zombiewood/releases/latest)).
+Every file has a `.sha256` next to it.
+
+| System | File | Notes |
+|---|---|---|
+| **Windows** 10/11 x64 | `Zombiewood-Win64-<version>.zip` | extract and run `zombiewood.exe`; see [Installation](#installation) |
+| **Linux** x86_64 (glibc 2.38+) | `Zombiewood-Linux-x86_64-<version>.AppImage` | one file: `chmod +x` and run; data in `~/.local/share/zombiewood`; see [Installation on Linux](#installation-on-linux) |
+| **Linux** x86_64 (glibc 2.38+) | `Zombiewood-Linux-x86_64-<version>.tar.gz` | portable folder: data next to the `zombiewood` binary |
+
+None of them contains the game: you always need your own APK.
+
 ## Requirements
+
+Windows (for Linux see [`docs/LINUX.md`](docs/LINUX.md)):
 
 - Windows 10 or 11, 64-bit.
 - A GPU with Direct3D 11 (the default backend); desktop OpenGL as an alternative.
@@ -50,6 +66,26 @@ Everything the port generates lives next to the exe (or in `ZOMBIEWOOD_HOME` if 
 `data/`, `saves/`, `saves_backup/`, `logs/`, `screens/`, `zombiewood.json`. To uninstall, delete the folder.
 
 Headless: `zombiewood --install=<apk> [--obb=<main.obb> --obb=<patch.obb>] [--install-only]`; `--reinstall` reopens the wizard.
+
+### Installation on Linux
+
+```sh
+chmod +x Zombiewood-Linux-x86_64-<version>.AppImage
+./Zombiewood-Linux-x86_64-<version>.AppImage
+```
+
+or, for the portable folder, `tar xzf Zombiewood-Linux-x86_64-<version>.tar.gz && ./Zombiewood-Linux-x86_64/zombiewood`.
+The same wizard appears: **Elegir APK… / Choose APK… (Enter)** opens a `zenity`/`kdialog` file dialog (without them, type
+or paste the APK path into the text field), then **Jugar / Play (Enter)**. `--install=<apk> --install-only` works too.
+
+- **Data folder:** the AppImage keeps `data/`, `saves/`, `logs/`, `zombiewood.json`… in `~/.local/share/zombiewood`
+  (`$XDG_DATA_HOME/zombiewood`); the tar.gz keeps them next to the binary. `ZOMBIEWOOD_HOME` overrides both.
+- **Requirements:** glibc 2.38+ (Ubuntu 24.04, Fedora 39, Debian 13…), X11 or Wayland, OpenGL ES 3.0 (Mesa or the vendor
+  driver). SDL2 is bundled; the OpenGL ES/EGL libraries are the system's.
+- **Known limits:** videos (logo, intro, "movie complete") are skipped for now; the *Backend* option only applies to
+  Windows; Steam Deck is untested. Saves are compatible with the Windows version (copy `saves/`).
+
+Full guide, troubleshooting (FUSE, software rendering, WSL2) and details: [`docs/LINUX.md`](docs/LINUX.md).
 
 ### Updating without losing your progress
 
@@ -139,10 +175,15 @@ Quick fix if it does not start: in `zombiewood.json` change `"backend": "d3d11"`
 
 ## Building from source
 
-See [`docs/BUILD.md`](docs/BUILD.md) (VS 2022 Build Tools + vcpkg + `win-release` preset). To build the package:
+See [`docs/BUILD.md`](docs/BUILD.md) (Windows: VS 2022 Build Tools + vcpkg + `win-release` preset; Linux: GCC 13+ and
+distro packages + `linux-release` preset). To build the packages:
 
 ```powershell
 pwsh tools\package.ps1 -Clean      # configures, builds, tests and creates dist\Zombiewood-Win64-<version>.zip
+```
+
+```sh
+tools/package-linux.sh --clean     # same on Linux: Zombiewood-Linux-x86_64-<version>.AppImage and .tar.gz (+ .sha256)
 ```
 
 Technical documentation: [`docs/PLAN.md`](docs/PLAN.md), [`docs/ANALYSIS.md`](docs/ANALYSIS.md) (APK analysis),
@@ -156,7 +197,8 @@ The icon is not versioned (it is game art). To embed it in `zombiewood.exe`, gen
 pwsh tools/make_icon.ps1 -Source C:\path\to\your\icon.jpg   # writes resources/zombiewood.ico
 ```
 
-CMake detects it and uses it as the exe icon (desktop, Explorer, taskbar and window).
+CMake detects it and uses it as the exe icon (desktop, Explorer, taskbar and window). The Linux build embeds the same
+file (window icon, AppImage icon); the scripts that generate it are PowerShell, so create it on Windows or with `pwsh`.
 
 ### Game cursor (optional)
 
@@ -167,7 +209,7 @@ figure in the left half of the image; `-Whole` uses the whole image):
 pwsh tools/make_cursor.ps1 -Source C:\path\to\cursor.png   # writes resources/zombiewood_cursor.bin
 ```
 
-Without it, the game uses the normal Windows cursor.
+Without it, the game uses the normal system cursor (Windows and Linux alike).
 
 ## Changelog
 
@@ -180,16 +222,18 @@ This repository's own code is the runtime (loader, HLE, frontend). It uses, unmo
 | Component | Used for | License |
 |---|---|---|
 | [SDL2](https://libsdl.org) | window, input, gamepads, audio | zlib |
-| [ANGLE](https://chromium.googlesource.com/angle/angle) (vcpkg) | OpenGL ES 2/3 on Direct3D 11 / OpenGL | 3-clause BSD |
-| [dynarmic](https://github.com/azahar-emu/dynarmic) (Azahar fork, commit `a466015`; local *shadow space* patch in the exception handler) and its externals (mcl, xbyak, Zydis/Zycore, fmt, robin-map, biscuit, oaknut) | ARM32 → x64 JIT recompiler | 0BSD (dynarmic); MIT/BSD for the externals |
+| [ANGLE](https://chromium.googlesource.com/angle/angle) (vcpkg; Windows only) | OpenGL ES 2/3 on Direct3D 11 / OpenGL | 3-clause BSD |
+| [dynarmic](https://github.com/azahar-emu/dynarmic) (Azahar fork, commit `a466015`; local *shadow space* patch in the Windows exception handler) and its externals (mcl, xbyak, Zydis/Zycore, fmt, robin-map, biscuit, oaknut) | ARM32 → x64 JIT recompiler | 0BSD (dynarmic); MIT/BSD for the externals |
 | [Dear ImGui](https://github.com/ocornut/imgui) v1.91.9 | F1 menu and wizard | MIT |
 | [zlib](https://zlib.net) | APK decompression | zlib |
 | [nlohmann/json](https://github.com/nlohmann/json) | configuration | MIT |
 | [Boost](https://www.boost.org) (ICL, Variant; headers) | dynarmic dependency | Boost Software License |
 | [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) | gamepad mappings (`gamecontrollerdb.txt`) | zlib |
-| Windows Media Foundation | H.264/AAC videos | system component |
+| Windows Media Foundation | H.264/AAC videos (Windows) | system component |
+| [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy) | builds the AppImage (packaging tool, not shipped code) | MIT |
 
-The full license texts ship in `licenses/` inside the zip. *Zombiewood* is the property of its respective owners
+The full license texts ship in `licenses/` inside each package (the Linux ones also carry the licenses of the bundled
+SDL2 dependencies). *Zombiewood* is the property of its respective owners
 (Gameloft / TechJ5 Games); this project is not affiliated with them, does not redistribute their content and requires a
 legitimate copy.
 

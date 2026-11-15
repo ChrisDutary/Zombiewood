@@ -1,11 +1,12 @@
-# Zombiewood para Windows (port nativo)
+# Zombiewood para Windows y Linux (port nativo)
 
 [English](README.md) · **Español**
 
-Runtime para jugar **Zombiewood 1.5.3** (juego de Android, de Gameloft) de forma nativa en Windows 10/11 x64, este proyecto es **solo el entorno de ejecución**. Carga la biblioteca nativa del propio
+Runtime para jugar **Zombiewood 1.5.3** (juego de Android, de Gameloft) de forma nativa en Windows 10/11 x64 y en Linux x86_64; este proyecto es **solo el entorno de ejecución**. Carga la biblioteca nativa del propio
 juego (`libZombieWood.so`, ARM de 32 bits) con un cargador ELF propio, la ejecuta con un recompilador JIT (dynarmic) y
 sustituye Android por Windows: libc/pthread de bionic, OpenGL ES 2 (ANGLE sobre Direct3D 11), audio (SDL2), JNI, vídeo
-(Media Foundation) y entrada (teclado, ratón, mando → toques virtuales sobre el HUD).
+(Media Foundation) y entrada (teclado, ratón, mando → toques virtuales sobre el HUD). La versión de Linux es el mismo
+runtime con el OpenGL ES del sistema (Mesa) en lugar de ANGLE y, por ahora, sin vídeos; ver [`docs/LINUX.md`](docs/LINUX.md).
 
 > ## ⚠️ No incluye el juego
 > Este repositorio y el paquete de descarga **no contienen ningún dato de Zombiewood** (ni código, ni gráficos, ni sonido,
@@ -16,7 +17,22 @@ sustituye Android por Windows: libc/pthread de bionic, OpenGL ES 2 (ANGLE sobre 
 Estado: jugable a 60 fps (tutorial, menú de películas y la escena 1 "Body Count" completa, con guardado y carga; ver [`docs/QA.md`](docs/QA.md) para lo
 probado y lo no probado: mando físico y escenas 2+ sin probar). Sin conexión: los servidores de Gameloft ya no existen, así que tienda online, TapJoy, etc. no funcionan.
 
+## Descargas
+
+En la sección **Releases** del repositorio ([última versión](https://github.com/ChrisDutary/Zombiewood/releases/latest)).
+Cada archivo tiene su `.sha256` al lado.
+
+| Sistema | Archivo | Notas |
+|---|---|---|
+| **Windows** 10/11 x64 | `Zombiewood-Win64-<versión>.zip` | descomprime y ejecuta `zombiewood.exe`; ver [Instalación](#instalación) |
+| **Linux** x86_64 (glibc 2.38+) | `Zombiewood-Linux-x86_64-<versión>.AppImage` | un solo archivo: `chmod +x` y ejecutar; datos en `~/.local/share/zombiewood`; ver [Instalación en Linux](#instalación-en-linux) |
+| **Linux** x86_64 (glibc 2.38+) | `Zombiewood-Linux-x86_64-<versión>.tar.gz` | carpeta portable: los datos quedan junto al binario `zombiewood` |
+
+Ninguno incluye el juego: siempre necesitas tu propio APK.
+
 ## Requisitos
+
+Windows (para Linux ver [`docs/LINUX.md`](docs/LINUX.md)):
 
 - Windows 10 u 11 de 64 bits.
 - GPU con Direct3D 11 (el backend por defecto); alternativamente OpenGL de escritorio.
@@ -46,6 +62,28 @@ Todo lo que genera el port queda junto al exe (o en `ZOMBIEWOOD_HOME` si defines
 `saves_backup/`, `logs/`, `screens/`, `zombiewood.json`. Para desinstalar, borra la carpeta.
 
 Sin interfaz: `zombiewood --install=<apk> [--obb=<main.obb> --obb=<patch.obb>] [--install-only]`; `--reinstall` reabre el asistente.
+
+### Instalación en Linux
+
+```sh
+chmod +x Zombiewood-Linux-x86_64-<versión>.AppImage
+./Zombiewood-Linux-x86_64-<versión>.AppImage
+```
+
+o, para la carpeta portable, `tar xzf Zombiewood-Linux-x86_64-<versión>.tar.gz && ./Zombiewood-Linux-x86_64/zombiewood`.
+Aparece el mismo asistente: **Elegir APK… (Enter)** abre un diálogo de archivos de `zenity`/`kdialog` (si no están
+instalados, escribe o pega la ruta del APK en el campo de texto) y luego **Jugar (Enter)**. También funciona
+`--install=<apk> --install-only`.
+
+- **Carpeta de datos:** el AppImage guarda `data/`, `saves/`, `logs/`, `zombiewood.json`… en `~/.local/share/zombiewood`
+  (`$XDG_DATA_HOME/zombiewood`); el tar.gz los deja junto al binario. `ZOMBIEWOOD_HOME` tiene prioridad sobre ambos.
+- **Requisitos:** glibc 2.38 o superior (Ubuntu 24.04, Fedora 39, Debian 13…), X11 o Wayland, OpenGL ES 3.0 (Mesa o el
+  driver del fabricante). SDL2 va incluido; las bibliotecas OpenGL ES/EGL son las del sistema.
+- **Límites conocidos:** los vídeos (logo, intro, "movie complete") se saltan por ahora; la opción *Backend* solo aplica
+  en Windows; Steam Deck sin probar. Las partidas son compatibles con la versión de Windows (copia `saves/`).
+
+Guía completa, solución de problemas (FUSE, renderizado por software, WSL2) y detalles (en inglés):
+[`docs/LINUX.md`](docs/LINUX.md).
 
 ### Actualizar sin perder tu partida
 
@@ -133,10 +171,15 @@ Prueba rápida si no arranca: en `zombiewood.json` cambia `"backend": "d3d11"` p
 
 ## Compilar desde el código
 
-Ver [`docs/BUILD.md`](docs/BUILD.md) (VS 2022 Build Tools + vcpkg + preset `win-release`). Para generar el paquete:
+Ver [`docs/BUILD.md`](docs/BUILD.md) (Windows: VS 2022 Build Tools + vcpkg + preset `win-release`; Linux: GCC 13+ y
+paquetes de la distribución + preset `linux-release`). Para generar los paquetes:
 
 ```powershell
 pwsh tools\package.ps1 -Clean      # configura, compila, prueba y crea dist\Zombiewood-Win64-<versión>.zip
+```
+
+```sh
+tools/package-linux.sh --clean     # lo mismo en Linux: Zombiewood-Linux-x86_64-<versión>.AppImage y .tar.gz (+ .sha256)
 ```
 
 Documentación técnica: [`docs/PLAN.md`](docs/PLAN.md), [`docs/ANALYSIS.md`](docs/ANALYSIS.md) (análisis del APK),
