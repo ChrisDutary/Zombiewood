@@ -508,7 +508,8 @@ void Menu::DrawControls() {
         const auto& k = cfg[stick]["keys"];
         ImGui::TextUnformatted(k.contains(dir) && k[dir].is_string() ? k[dir].get<std::string>().c_str() : "-");
         ImGui::TableNextColumn();
-        ImGui::TextDisabled("stick %s", cfg[stick].value("pad_stick", std::string("-")).c_str());
+        const std::string ps_stick = cfg[stick].value("pad_stick", std::string("-"));
+        ImGui::TextDisabled("%s", ps_stick == "left" ? T("stick izquierdo") : ps_stick == "right" ? T("stick derecho") : "-");
         ImGui::TableNextColumn();
         capture_btn(std::string(stick) + "." + dir, false);
       }
@@ -682,16 +683,17 @@ void Menu::DrawAbout(const MenuStats& st) {
 // con primitivas (sin arte de terceros ni fuentes especiales).
 void Menu::DrawHints() {
   ImDrawList* dl = ImGui::GetBackgroundDrawList();
-  const float r = 13.0f;
+  const float r = 17.0f, fs = 24.0f;  // insignias legibles sobre el HUD (la fuente por defecto de ImGui es de 13 px)
+  ImFont* font = ImGui::GetFont();
   for (const auto& h : hints_) {
     const ImVec2 c(h.x, h.y);
     if (h.glyph == ButtonHint::Key || h.glyph == ButtonHint::PadText) {
-      const ImVec2 ts = ImGui::CalcTextSize(h.text.c_str());
-      const float w = std::max(ts.x + 12.0f, 2 * r);
+      const ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0.0f, h.text.c_str());
+      const float w = std::max(ts.x + 16.0f, 2 * r);
       const ImVec2 a(c.x - w / 2, c.y - r), b(c.x + w / 2, c.y + r);
-      dl->AddRectFilled(a, b, IM_COL32(15, 18, 15, 200), h.glyph == ButtonHint::Key ? 4.0f : r);
-      dl->AddRect(a, b, IM_COL32(170, 220, 120, 230), h.glyph == ButtonHint::Key ? 4.0f : r, 0, 1.5f);
-      dl->AddText(ImVec2(c.x - ts.x / 2, c.y - ts.y / 2), IM_COL32(240, 245, 235, 255), h.text.c_str());
+      dl->AddRectFilled(a, b, IM_COL32(15, 18, 15, 210), h.glyph == ButtonHint::Key ? 5.0f : r);
+      dl->AddRect(a, b, IM_COL32(170, 220, 120, 240), h.glyph == ButtonHint::Key ? 5.0f : r, 0, 2.0f);
+      dl->AddText(font, fs, ImVec2(c.x - ts.x / 2, c.y - ts.y / 2), IM_COL32(245, 250, 240, 255), h.text.c_str());
       continue;
     }
     dl->AddCircleFilled(c, r, IM_COL32(15, 18, 15, 200));

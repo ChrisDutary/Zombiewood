@@ -10,7 +10,28 @@ Each version is published as a release on [GitHub](https://github.com/ChrisDutar
 
 ## [Unreleased]
 
-Nothing yet.
+Work in progress for **0.3.0** on `feature/usability` (and `feature/linux`).
+
+### Added
+- **Menu in English and Spanish**: the F1 menu and the first-run wizard follow the system language by default;
+  *Graphics → Menu language* switches it instantly (`"ui_language": "auto" | "es" | "en"`). The game's own language
+  setting is now labeled *Game language*.
+- **Optional on-screen touch sticks** (*Graphics → On-screen touch sticks*, `"hud_sticks"`): *Automatic* hides them
+  while you play with keyboard or gamepad and shows them when you use the mouse as touch; or *Always show* / *Always
+  hide*. It uses the game's own HUD switch (originally for the Xperia Play); controls keep working with the sticks
+  hidden (verified with keyboard and touch input).
+- **Button hints**: small badges next to the HUD buttons (medkit, weapon, pause) showing the key or gamepad button to
+  press — keycaps for keyboard, PlayStation shapes (✕ ○ □ △) or Xbox letters for gamepads, following the last device
+  used. Only shown inside scenes and hidden while paused (`"button_hints"`).
+- **New version notice**: at startup the port checks GitHub's public releases (at most once a day, nothing about you
+  is sent) and shows a *Download* banner/menu item when a newer version exists (`"update_check"`, toggle in *Help →
+  About*). Test builds are ignored.
+- *About* window shows the port version.
+
+### Changed
+- The game state (in a scene / paused) is read from the game's memory without modifying it, to drive the sticks and
+  hints (`src/frontend/hud.cpp`).
+- Test harness: `sdlkey <key>` (press without `up`) works again.
 
 ## [0.2.2] — 2026-11-15
 

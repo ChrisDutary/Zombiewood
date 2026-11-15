@@ -103,6 +103,8 @@ const std::unordered_map<std::string_view, const char*>& English() {
       {"abajo", "down"},
       {"izquierda", "left"},
       {"derecha", "right"},
+      {"stick izquierdo", "left stick"},
+      {"stick derecho", "right stick"},
       {"Boton HUD: ", "HUD button: "},
       {"botiquin", "medkit"},
       {"arma", "weapon"},

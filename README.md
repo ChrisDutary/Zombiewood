@@ -18,7 +18,9 @@ Status: playable at 60 fps (tutorial, movie menu and scene 1 "Body Count" fully 
 [`docs/QA.md`](docs/QA.md) for what has and has not been tested: physical gamepads and scenes 2+ are untested).
 Offline only: Gameloft's servers no longer exist, so the online store, TapJoy, etc. do not work.
 
-> The in-game port menu (F1) is currently in Spanish; menu names are given below as *Spanish (English)*.
+> Since 0.3.0 the port menu (F1) is available in **English and Spanish** and follows your system language
+> (change it in *Graphics → Menu language*). Older versions only had Spanish menus; some names below still show
+> the Spanish label in parentheses for those versions.
 
 ## Requirements
 
@@ -90,7 +92,8 @@ The **F1** menu (Zombiewood · Gráficos/Graphics · Audio · Controles/Controls
 instantly to `zombiewood.json`: graphics backend (D3D11 / OpenGL; requires a restart), internal resolution, filtering,
 VSync, FPS limit, fullscreen, volumes, skip videos, language (en, fr, de, es, it, pt, ja, ko, zh, ru; on restart),
 gamepad dead zone, backups, and the **zombie cursor** (on/off and size 32/48/64/96 px; keys `cursor` and
-`cursor_size`). The full reference of keys, environment variables and command-line options is in
+`cursor_size`). Since 0.3.0 also: **menu language**, **on-screen touch sticks** (automatic / always show / always
+hide), **button hints** next to the HUD and the **new version notice** (*Help → About*). The full reference of keys, environment variables and command-line options is in
 [`docs/BUILD.md`](docs/BUILD.md).
 
 Saves are stored in `saves/`, and the port makes automatic copies in `saves_backup/` (at startup and every time the game

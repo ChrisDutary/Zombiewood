@@ -83,7 +83,9 @@ botones de PlayStation. Usa **Asistente: mapear con el mando** para asignar cada
 El menú **F1** (Zombiewood · Gráficos · Audio · Controles · Carpetas · Ayuda) guarda al instante en `zombiewood.json`:
 backend gráfico (D3D11 / OpenGL; pide reiniciar), resolución interna, filtrado, VSync, límite de FPS, pantalla completa,
 volúmenes, saltar vídeos, idioma (en, fr, de, es, it, pt, ja, ko, zh, ru; al reiniciar), zona muerta del mando, copias de
-seguridad, y el **cursor zombi** (on/off y tamaño 32/48/64/96 px; claves `cursor` y `cursor_size`). La referencia completa de claves, variables de entorno y opciones de línea de comandos está en
+seguridad, y el **cursor zombi** (on/off y tamaño 32/48/64/96 px; claves `cursor` y `cursor_size`). Desde la 0.3.0
+también: **idioma del menú** (español/inglés, por defecto el del sistema), **sticks táctiles en pantalla** (automático /
+mostrar siempre / ocultar siempre), **ayudas de botones** junto al HUD y el **aviso de versión nueva** (*Ayuda → Acerca de*). La referencia completa de claves, variables de entorno y opciones de línea de comandos está en
 [`docs/BUILD.md`](docs/BUILD.md).
 
 Las partidas están en `saves/` y el port hace copias automáticas en `saves_backup/` (al arrancar y cada vez que el juego

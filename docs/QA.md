@@ -95,3 +95,16 @@ B1 fix.
 | Crash report (`logs/crash-*.dmp`) | Implemented | chained after the CPU core's host-fault logger; not triggered in normal runs |
 | User test of test build 1 (USB DualSense, Steam closed) | ✅ Gamepad works | reported by the owner; startup glitch traced to the logo video audio (fixed in test build 2) |
 | User test of test build 2 | ✅ OK | owner: game starts better, gamepad works; log: logo/intro video **0 audio dropouts**, steady 60 fps (step 5.3–5.6 ms), 1 game-audio dropout during loading |
+
+## v0.3.0 (feature/usability) — usability
+
+| Test | Result | Evidence / notes |
+|---|---|---|
+| Build + ctest | OK | 8/8 |
+| Game-state detection (`hud.cpp`) | OK | log `hud: estado del juego`: CLevel* appears at load start, `+0x100` is 1 only right after loading → rule "level exists and finished loading once"; pause flag `+0x1d4` |
+| Hide touch sticks (`Game.nativeXperiaToggleJoysticks(1)`) | ✅ | screenshots: sticks gone with `hud_sticks=hide`; `0` shows them again |
+| Controls with hidden sticks | ✅ | touch on the stick area and **WASD** (`sdlkey D`) move the player; screenshots before/after |
+| Button hints | ✅ | `P` / `Q` / `E` badges next to pause / weapon / medkit inside the scene; none in menus or while paused |
+| Menu in English | ✅ | Graphics and Controls windows fully translated (screenshots); Spanish unchanged |
+| Update check | ✅ | real GitHub: latest `v0.2.2` < 0.3.0 → no notice; simulated `v9.9.9` → banner with *Download* |
+| Gamepad hints with real controller, Auto mode switching by hand | ⏳ Pending user test | |

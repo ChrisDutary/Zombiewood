@@ -267,6 +267,12 @@ class GlThread {
   // v0.3.0: sticks tactiles (ocultar/mostrar) y ayudas de botones, segun el estado del juego (hud.h).
   void UpdateHud() {
     const hud::GameState gs = hud::Read();
+    if (gs.level != last_raw_[0] || gs.loaded != last_raw_[1] || gs.pause_flag != last_raw_[2]) {
+      log::Info("hud: estado del juego level=0x{:08x} cargado={} pausa={}", gs.level, gs.loaded, gs.pause_flag);
+      last_raw_[0] = gs.level;
+      last_raw_[1] = gs.loaded;
+      last_raw_[2] = gs.pause_flag;
+    }
     if (gs.in_level) {
       const bool hide = s_.hud_sticks == "hide" ||
                         (s_.hud_sticks == "auto" && mapper_.last_device() != input::Mapper::Device::Mouse);
@@ -659,10 +665,11 @@ class GlThread {
     } else if (cmd == "sdlkey") {
       std::string rest;
       std::getline(ss, rest);
-      const bool down = rest.size() < 3 || rest.substr(rest.size() - 3) != " up";
-      const auto cut = rest.rfind(' ');
-      std::string name = cut == std::string::npos ? rest : rest.substr(0, cut);
-      while (!name.empty() && name[0] == ' ') name.erase(0, 1);
+      // "sdlkey <nombre>" = pulsar, "sdlkey <nombre> up" = soltar (el nombre puede tener espacios: "Left Shift").
+      while (!rest.empty() && rest.front() == ' ') rest.erase(0, 1);
+      while (!rest.empty() && rest.back() == ' ') rest.pop_back();
+      const bool down = !(rest.size() > 3 && rest.substr(rest.size() - 3) == " up");
+      const std::string name = down ? rest : rest.substr(0, rest.size() - 3);
       mapper_.Key(SDL_GetScancodeFromName(name.c_str()), down);
     } else if (cmd == "pad") {
       std::string b, st;
@@ -890,6 +897,7 @@ class GlThread {
   // v0.3.0 HUD. Valores de Application::XperiaToggleJoysticks: 0 = frame 0 del HUD, !=0 = frame 1 (verificado en QA).
   static constexpr int kSticksVisible = 0, kSticksHidden = 1;
   bool was_in_level_ = false, sticks_hidden_ = false;
+  unsigned last_raw_[3] = {};
   long long sticks_applied_frame_ = 0;
   Clock::time_point next_frame_;
   std::deque<std::string> cmds_;

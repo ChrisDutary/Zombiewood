@@ -16,6 +16,7 @@ struct GameState {
   bool valid = false;     // se pudo leer el estado
   bool in_level = false;  // escena cargada (jugando o en su menu de pausa)
   bool paused = false;
+  unsigned level = 0, loaded = 0, pause_flag = 0;  // valores crudos (diagnostico)
 };
 
 // Llamar desde el hilo GL entre frames (lee memoria guest; no ejecuta codigo del juego).
