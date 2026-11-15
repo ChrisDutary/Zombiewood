@@ -94,3 +94,4 @@ B1 fix.
 | Console window at launch (double click) | ✅ Fixed | exe built as a windowed app: 0 `conhost` child processes |
 | Crash report (`logs/crash-*.dmp`) | Implemented | chained after the CPU core's host-fault logger; not triggered in normal runs |
 | User test of test build 1 (USB DualSense, Steam closed) | ✅ Gamepad works | reported by the owner; startup glitch traced to the logo video audio (fixed in test build 2) |
+| User test of test build 2 | ✅ OK | owner: game starts better, gamepad works; log: logo/intro video **0 audio dropouts**, steady 60 fps (step 5.3–5.6 ms), 1 game-audio dropout during loading |

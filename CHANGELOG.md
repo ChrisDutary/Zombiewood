@@ -10,7 +10,12 @@ Each version is published as a release on [GitHub](https://github.com/ChrisDutar
 
 ## [Unreleased]
 
-Work in progress on the `fix/v0.2.2` branch (to be released as 0.2.2 after testing).
+Nothing yet.
+
+## [0.2.2] — 2026-11-15
+
+Input, audio and quality-of-life fixes. Tested by the owner with a DualSense over USB (test builds 1 and 2).
+Saves and settings from 0.2.x keep working.
 
 ### Fixed
 - **Quick key/button taps were lost (bug B2)**: pressing and releasing within the same frame (~16 ms) never reached the
